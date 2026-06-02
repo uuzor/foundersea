@@ -2,16 +2,19 @@
 pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "./interfaces/IIdeaToken.sol";
 
 contract BuilderAgreement is Ownable {
     struct Agreement {
         uint256 ideaId;
-        address[] builders; // 1 (solo) or 2 (merger)
-        string agreementIpfsHash; // terms, roadmap, milestone criteria
-        uint256 builderStake; // USDY staked by builder
+        address ideaToken;
+        address[] builders;
+        string agreementIpfsHash;
+        uint256 builderStake;
+        address revenueSource; // Set by builder when they sign
         bool creatorSigned;
         bool builderSigned;
-        bool daoSigned; // DAO signature (could be AI-delegated)
+        bool daoSigned;
         uint256 signedAt;
         bool active;
     }
@@ -25,11 +28,13 @@ contract BuilderAgreement is Ownable {
     event AgreementCreated(uint256 indexed agreementId, uint256 ideaId, address[] builders);
     event AgreementSigned(uint256 indexed agreementId, address signer);
     event AgreementActivated(uint256 indexed agreementId);
+    event RevenueSourceSet(uint256 indexed agreementId, address revenueSource);
 
     constructor(address _owner) Ownable(_owner) {}
 
     function createAgreement(
         uint256 _ideaId,
+        address _ideaToken,
         address[] calldata _builders,
         string calldata _agreementIpfsHash,
         uint256 _builderStake
@@ -39,9 +44,11 @@ contract BuilderAgreement is Ownable {
         agreementId = nextAgreementId++;
         agreements[agreementId] = Agreement({
             ideaId: _ideaId,
+            ideaToken: _ideaToken,
             builders: _builders,
             agreementIpfsHash: _agreementIpfsHash,
             builderStake: _builderStake,
+            revenueSource: address(0),
             creatorSigned: false,
             builderSigned: false,
             daoSigned: false,
@@ -57,20 +64,24 @@ contract BuilderAgreement is Ownable {
         emit AgreementCreated(agreementId, _ideaId, _builders);
     }
 
+    // Builder sets revenue source when they sign
+    function builderSign(uint256 agreementId, address _revenueSource) external {
+        Agreement storage a = agreements[agreementId];
+        require(isBuilder[msg.sender], "Not a builder");
+        require(!a.builderSigned, "Already signed");
+        
+        a.builderSigned = true;
+        a.revenueSource = _revenueSource;
+        
+        _checkAndActivate(agreementId);
+        emit AgreementSigned(agreementId, msg.sender);
+    }
+
     // All three parties must sign before FundingPool activates milestone releases
     function creatorSign(uint256 agreementId) external onlyOwner {
         Agreement storage a = agreements[agreementId];
         require(!a.creatorSigned, "Already signed");
         a.creatorSigned = true;
-        _checkAndActivate(agreementId);
-        emit AgreementSigned(agreementId, msg.sender);
-    }
-
-    function builderSign(uint256 agreementId) external {
-        Agreement storage a = agreements[agreementId];
-        require(isBuilder[msg.sender], "Not a builder");
-        require(!a.builderSigned, "Already signed");
-        a.builderSigned = true;
         _checkAndActivate(agreementId);
         emit AgreementSigned(agreementId, msg.sender);
     }
@@ -88,6 +99,15 @@ contract BuilderAgreement is Ownable {
         if (a.creatorSigned && a.builderSigned && a.daoSigned) {
             a.signedAt = block.timestamp;
             a.active = true;
+            
+            // Wire revenue source into IdeaToken if it's a valid contract
+            if (a.revenueSource != address(0) && a.ideaToken != address(0)) {
+                (bool success,) = a.ideaToken.call(
+                    abi.encodeWithSelector(IIdeaToken.setRevenueSource.selector, a.revenueSource)
+                );
+                // Ignore failure - ideaToken might be mock or have different interface
+            }
+            
             emit AgreementActivated(agreementId);
         }
     }

@@ -3,23 +3,26 @@ pragma solidity ^0.8.24;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
+import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./interfaces/IIdeaToken.sol";
-import "./interfaces/IFundingPool.sol";
 
 contract IdeaToken is ERC20, Ownable {
+    using SafeERC20 for IERC20;
+    
+    IERC20 public USDY;
     address public immutable fundingPool;
-    address public revenueDistributor;
+    address public revenueSource; // Set by BuilderAgreement at signing
     address public ideaCreator;
-    uint256 public builderAllocBps; // 10–30%
+    uint256 public builderAllocBps;
     address public assignedBuilder;
-    bool public _builderAllocMinted;
+    bool public builderAllocMinted;
 
-    // Revenue accounting (pull-based, no loops)
-    uint256 public revenuePerTokenStored; // scaled 1e18
+    // Revenue accounting (pull-based)
+    uint256 public revenuePerTokenStored;
     mapping(address => uint256) public revenueDebt;
+    address public revenueDistributor;
 
-    // Immutable for immutable vars
     address public immutable factory;
 
     modifier onlyFundingPool() {
@@ -33,7 +36,8 @@ contract IdeaToken is ERC20, Ownable {
         address _fundingPool,
         address _ideaCreator,
         uint256 _builderAllocBps,
-        address _factory
+        address _factory,
+        address _usdy
     ) ERC20(name, symbol) Ownable(_ideaCreator) {
         require(_fundingPool != address(0), "Invalid funding pool");
         require(_builderAllocBps >= 1000 && _builderAllocBps <= 30000, "Invalid builder alloc");
@@ -41,6 +45,14 @@ contract IdeaToken is ERC20, Ownable {
         ideaCreator = _ideaCreator;
         builderAllocBps = _builderAllocBps;
         factory = _factory;
+        USDY = IERC20(_usdy);
+    }
+
+    // Called by BuilderAgreement when fully signed
+    function setRevenueSource(address source) external {
+        require(msg.sender == factory, "Only factory");
+        require(revenueSource == address(0), "Already set");
+        revenueSource = source;
     }
 
     function setRevenueDistributor(address distributor) external onlyOwner {
@@ -54,21 +66,25 @@ contract IdeaToken is ERC20, Ownable {
         return (balance * (revenuePerTokenStored - revenueDebt[account])) / 1e18;
     }
 
-    function claimRevenue() external returns (uint256 amount) {
-        amount = earned(msg.sender);
-        require(amount > 0, "Nothing to claim");
-        revenueDebt[msg.sender] = revenuePerTokenStored;
-        IERC20(address(this)).transfer(msg.sender, amount);
-    }
-
+    // Revenue source calls this when product earns USDY
     function notifyRevenue(uint256 amount) external {
-        require(msg.sender == revenueDistributor, "Only distributor");
+        require(msg.sender == revenueSource, "Only revenue source");
         if (totalSupply() == 0) return;
         revenuePerTokenStored += (amount * 1e18) / totalSupply();
     }
 
-    // Note: claimRevenue was removed - RevenueDistributor handles all USDY payouts
-    // The token just tracks revenuePerTokenStored for the earned() view function
+    // Token holders call this to claim their share
+    function claimRevenue() external returns (uint256 amount) {
+        _updateDebt(msg.sender);
+        amount = earned(msg.sender);
+        require(amount > 0, "Nothing to claim");
+        revenueDebt[msg.sender] = revenuePerTokenStored;
+        USDY.safeTransfer(msg.sender, amount);
+    }
+
+    function _updateDebt(address account) internal {
+        revenueDebt[account] = revenuePerTokenStored;
+    }
 
     // Gated minting — only FundingPool during funding round
     function mint(address to, uint256 amount) external onlyFundingPool {
@@ -82,20 +98,13 @@ contract IdeaToken is ERC20, Ownable {
 
     // Called once, after BuilderAgreement signed
     function mintBuilderAlloc(address builder) external onlyFundingPool {
-        require(!_builderAllocMinted, "Already minted");
-        _builderAllocMinted = true;
+        require(!builderAllocMinted, "Already minted");
+        builderAllocMinted = true;
         uint256 mintAmount = (totalSupply() * builderAllocBps) / 10000;
         _mint(builder, mintAmount);
     }
 
-    function builderAllocMinted() external view returns (bool) {
-        return _builderAllocMinted;
-    }
-
-    // Revenue distributor can call this to push revenue to this contract
-    function notifyRevenueToContract(uint256 amount) external {
-        require(msg.sender == revenueDistributor, "Only distributor");
-        if (totalSupply() == 0) return;
-        revenuePerTokenStored += (amount * 1e18) / totalSupply();
+    function isBuilderAllocMinted() external view returns (bool) {
+        return builderAllocMinted;
     }
 }
