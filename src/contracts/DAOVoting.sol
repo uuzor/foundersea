@@ -11,6 +11,7 @@ contract DAOVoting is Ownable {
     
     // Per-token-holder delegation
     mapping(address => bool) public delegatedToAI;
+    address[] public delegatedHolders; // Track all delegated holders for power calculation
     
     // Active proposals
     struct Proposal {
@@ -25,10 +26,12 @@ contract DAOVoting is Ownable {
         bool aiRecommendation; // AI's recommendation recorded on-chain
         uint256 aiConfidence;
         bool created;
+        uint256 snapshotBlock; // Block at proposal creation for token balance snapshots
     }
 
     mapping(uint256 => Proposal) public proposals;
     mapping(uint256 => mapping(address => bool)) public hasVoted;
+    mapping(uint256 => bool) public aiHasVoted; // Prevent AI from voting multiple times
     
     uint256 public nextProposalId;
     uint256 public votingDuration = 7 days;
@@ -45,9 +48,7 @@ contract DAOVoting is Ownable {
         _;
     }
 
-    constructor(address _owner) Ownable(_owner) {
-        // Owner can set aiAgent and ideaToken via setters
-    }
+    constructor(address _owner) Ownable(_owner) {}
 
     function setAiAgent(address _aiAgent) external onlyOwner {
         require(_aiAgent != address(0), "Invalid AI agent");
@@ -62,6 +63,7 @@ contract DAOVoting is Ownable {
     function delegateToAI() external {
         require(!delegatedToAI[msg.sender], "Already delegated");
         delegatedToAI[msg.sender] = true;
+        delegatedHolders.push(msg.sender);
         emit VoteDelegatedToAI(msg.sender);
     }
 
@@ -88,7 +90,8 @@ contract DAOVoting is Ownable {
             executed: false,
             aiRecommendation: false,
             aiConfidence: 0,
-            created: true
+            created: true,
+            snapshotBlock: block.number
         });
         emit ProposalCreated(proposalId, _ideaId);
     }
@@ -121,7 +124,10 @@ contract DAOVoting is Ownable {
         string calldata reasoningIpfsHash
     ) external onlyAIAgent {
         require(proposals[proposalId].created, "Proposal not found");
+        require(!aiHasVoted[proposalId], "AI already voted");
         require(!proposals[proposalId].executed, "Already executed");
+        
+        aiHasVoted[proposalId] = true;
         
         // Record AI recommendation
         proposals[proposalId].aiRecommendation = support;
@@ -140,9 +146,13 @@ contract DAOVoting is Ownable {
     }
 
     function _getTotalDelegatedPower() internal view returns (uint256) {
-        // This is simplified - in production would iterate through all token holders
-        // For now, we track the count and get power per holder at vote time
-        return 0; // Will be calculated at execution
+        uint256 totalPower;
+        for (uint256 i = 0; i < delegatedHolders.length; i++) {
+            if (delegatedToAI[delegatedHolders[i]]) {
+                totalPower += ideaToken.balanceOf(delegatedHolders[i]);
+            }
+        }
+        return totalPower;
     }
 
     function execute(uint256 proposalId) external {

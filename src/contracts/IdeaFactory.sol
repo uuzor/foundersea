@@ -124,9 +124,8 @@ contract IdeaFactory is Ownable {
             address(this)
         );
 
-        // Update FundingPool with IdeaToken address
-        // Note: In production, consider using ERC-1167 minimal proxies for cheaper deployment
-        // For now, we'll need to update the funding pool reference
+        // Wire FundingPool to IdeaToken (must happen before any deposits)
+        fundingPool.setIdeaToken(address(ideaToken));
 
         // Create the idea
         ideas[ideaId] = Idea({

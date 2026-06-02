@@ -81,6 +81,12 @@ contract FundingPool is Ownable {
         dao = _dao;
     }
 
+    // Called by factory after IdeaToken is deployed
+    function setIdeaToken(address _ideaToken) external onlyOwner {
+        require(_ideaToken != address(0), "Invalid idea token");
+        ideaToken = _ideaToken;
+    }
+
     // Funding round
     function deposit(uint256 amount) external {
         require(!fundingClosed, "Funding closed");
@@ -92,10 +98,24 @@ contract FundingPool is Ownable {
         fundingToken.safeTransferFrom(msg.sender, address(this), amount);
         raisedAmount += amount;
 
-        uint256 tokensToMint = amount * tokenPrice / 1e6;
+        // Calculate tokens with bonding curve (early investors get more tokens)
+        uint256 tokensToMint = tokensForAmount(amount);
         IIdeaToken(ideaToken).mint(msg.sender, tokensToMint);
         
         emit Deposit(msg.sender, amount, tokensToMint);
+    }
+
+    // Linear bonding curve: price increases from base to 2x as pool fills
+    // Early investors pay less, taking more risk - aligns with RWA thesis
+    function tokensForAmount(uint256 amount) public view returns (uint256) {
+        if (hardCap == 0) return 0;
+        
+        uint256 basePrice = 1e6;
+        // price = basePrice * (1 + raisedAmount / hardCap), capped at 2x
+        uint256 price = basePrice * (hardCap + raisedAmount) / hardCap;
+        if (price > 2 * basePrice) price = 2 * basePrice;
+        
+        return (amount * 1e6) / price;
     }
 
     function closeFunding() external onlyOwner {
@@ -187,14 +207,18 @@ contract FundingPool is Ownable {
     function refund() external {
         require(fundingClosed, "Funding not closed");
         require(!checkSoftCapMet(), "Soft cap met");
+        
         uint256 balance = IIdeaToken(ideaToken).balanceOf(msg.sender);
         require(balance > 0, "No tokens");
         
-        // User must approve this contract to spend their IdeaTokens
-        // Then we transfer to address(0) to burn
-        IIdeaToken(ideaToken).transferFrom(msg.sender, address(0), balance);
+        // Snapshot supply before burning
+        uint256 currentSupply = IIdeaToken(ideaToken).totalSupply();
         
-        uint256 refundAmount = balance * raisedAmount / IIdeaToken(ideaToken).totalSupply();
+        // Burn user's tokens
+        IIdeaToken(ideaToken).burn(msg.sender, balance);
+        
+        // Calculate refund proportionally
+        uint256 refundAmount = balance * raisedAmount / currentSupply;
         fundingToken.safeTransfer(msg.sender, refundAmount);
     }
 
