@@ -6,7 +6,6 @@ import "../src/contracts/AgentIdentity.sol";
 import "../src/contracts/IdeaFactory.sol";
 import "../src/contracts/DAOVoting.sol";
 import "../src/contracts/IdeaMarketplace.sol";
-import "../src/contracts/RevenueDistributor.sol";
 
 // Placeholder USDY address for Mantle Sepolia - will be updated with actual address
 address constant USDY_PLACEHOLDER = 0x0000000000000000000000000000000000000001;
@@ -40,11 +39,6 @@ contract DeployMainnet is Script {
         ideaFactory.setAiAgent(agentIdentity.aiAgent());
         ideaFactory.setAgentIdentity(address(agentIdentity));
         
-        // Deploy RevenueDistributor
-        console.log("Deploying RevenueDistributor...");
-        RevenueDistributor revenueDistributor = new RevenueDistributor(deployer);
-        console.log("RevenueDistributor deployed:", address(revenueDistributor));
-        
         // Deploy DAOVoting
         console.log("Deploying DAOVoting...");
         DAOVoting daoVoting = new DAOVoting(deployer);
@@ -66,7 +60,6 @@ contract DeployMainnet is Script {
         console.log("========== DEPLOYMENT SUMMARY ==========");
         console.log("AgentIdentity:", address(agentIdentity));
         console.log("IdeaFactory:", address(ideaFactory));
-        console.log("RevenueDistributor:", address(revenueDistributor));
         console.log("DAOVoting:", address(daoVoting));
         console.log("IdeaMarketplace:", address(marketplace));
         console.log("AI Agent:", agentIdentity.aiAgent());

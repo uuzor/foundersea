@@ -9,6 +9,8 @@ interface IIdeaToken is IERC20 {
     function mintBuilderAlloc(address builder, uint256 amount) external;
     function builderAllocMinted() external view returns (bool);
     function earned(address account) external view returns (uint256);
+    function claimRevenue() external returns (uint256);
     function notifyRevenue(uint256 amount) external;
+    function setRevenueSource(address source) external;
     function fundingPool() external view returns (address);
 }

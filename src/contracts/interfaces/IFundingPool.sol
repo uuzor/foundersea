@@ -2,6 +2,7 @@
 pragma solidity ^0.8.24;
 
 interface IFundingPool {
+    function getFundingToken() external view returns (address);
     function deposit(uint256 amount) external;
     function closeFunding() external;
     function releaseMilestone(uint256 index) external;
