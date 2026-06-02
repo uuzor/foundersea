@@ -52,6 +52,7 @@ contract IdeaFactory is Ownable {
     mapping(uint256 => Idea) public ideas;
     mapping(uint256 => address) public ideaTokens;
     mapping(uint256 => address) public fundingPools;
+    mapping(uint256 => address) public builderAgreements;
     mapping(uint256 => bool) public aiApproved;
     mapping(address => uint256[]) public creatorIdeas;
     
@@ -62,6 +63,7 @@ contract IdeaFactory is Ownable {
     event IdeaRejectedByAI(uint256 indexed ideaId, string reasonIpfsHash);
     event IdeaAbandoned(uint256 indexed ideaId, uint256 refundAmount);
     event FundingPoolConfigured(uint256 indexed ideaId, address fundingPool);
+    event RevenueSourceWired(uint256 indexed ideaId, address revenueSource);
 
     constructor(address _usdy, address _treasury, address _owner) Ownable(_owner) {
         require(_usdy != address(0), "Invalid USDY");
@@ -226,6 +228,23 @@ contract IdeaFactory is Ownable {
 
     function getCreatorIdeas(address creator) external view returns (uint256[] memory) {
         return creatorIdeas[creator];
+    }
+
+    // Called by BuilderAgreement after all parties sign
+    // This wires the revenue source into IdeaToken (only callable by registered agreement)
+    function wireRevenueSource(uint256 ideaId, address revenueSource) external {
+        require(msg.sender == builderAgreements[ideaId], "Only registered agreement");
+        require(ideas[ideaId].ideaToken != address(0), "Idea not created");
+        
+        IIdeaToken(ideas[ideaId].ideaToken).setRevenueSource(revenueSource);
+        emit RevenueSourceWired(ideaId, revenueSource);
+    }
+
+    // Register a builder agreement for an idea
+    function registerBuilderAgreement(uint256 ideaId, address agreement) external {
+        require(ideas[ideaId].creator == msg.sender, "Not creator");
+        require(builderAgreements[ideaId] == address(0), "Already registered");
+        builderAgreements[ideaId] = agreement;
     }
 
     function _toString(uint256 value) internal pure returns (string memory) {

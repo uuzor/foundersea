@@ -66,24 +66,20 @@ contract IdeaToken is ERC20, Ownable {
         return (balance * (revenuePerTokenStored - revenueDebt[account])) / 1e18;
     }
 
-    // Revenue source calls this when product earns USDY
+    // Revenue source calls this when product earns USDY (pulls USDY into this contract)
     function notifyRevenue(uint256 amount) external {
         require(msg.sender == revenueSource, "Only revenue source");
         if (totalSupply() == 0) return;
+        USDY.safeTransferFrom(msg.sender, address(this), amount);
         revenuePerTokenStored += (amount * 1e18) / totalSupply();
     }
 
     // Token holders call this to claim their share
     function claimRevenue() external returns (uint256 amount) {
-        _updateDebt(msg.sender);
         amount = earned(msg.sender);
         require(amount > 0, "Nothing to claim");
         revenueDebt[msg.sender] = revenuePerTokenStored;
         USDY.safeTransfer(msg.sender, amount);
-    }
-
-    function _updateDebt(address account) internal {
-        revenueDebt[account] = revenuePerTokenStored;
     }
 
     // Gated minting — only FundingPool during funding round
