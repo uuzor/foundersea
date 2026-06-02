@@ -35,13 +35,14 @@ contract MockERC20 is ERC20 {
 
 contract IdeaTokenTest is Test {
     IdeaToken public ideaToken;
+    MockERC20 public usdy;
     address public fundingPool = address(0x123);
     address public creator = address(0x456);
     address public factory = address(0x789);
 
     function setUp() public {
-        address usdy = address(new MockERC20("USDY", "USDY", 6));
-        ideaToken = new IdeaToken("FounderSea Idea 1", "FSID-1", fundingPool, creator, 2000, factory, usdy);
+        usdy = new MockERC20("USDY", "USDY", 6);
+        ideaToken = new IdeaToken("FounderSea Idea 1", "FSID-1", fundingPool, creator, 2000, factory, address(usdy));
     }
 
     function testTokenMetadata() public {
@@ -71,7 +72,12 @@ contract IdeaTokenTest is Test {
         vm.prank(factory);
         ideaToken.setRevenueSource(address(0xDEF));
         
-        // Notify revenue from revenue source
+        // Mint USDY to revenue source and approve
+        usdy.mint(address(0xDEF), 1000e6);
+        vm.prank(address(0xDEF));
+        usdy.approve(address(ideaToken), type(uint256).max);
+        
+        // Notify revenue from revenue source (pulls USDY into IdeaToken)
         vm.prank(address(0xDEF));
         ideaToken.notifyRevenue(100e6);
         
@@ -124,7 +130,7 @@ contract BuilderAgreementTest is Test {
         address[] memory builders = new address[](1);
         builders[0] = address(0x456);
         
-        uint256 agreementId = agreement.createAgreement(1, address(0x789), builders, "ipfs://test", 100e6);
+        uint256 agreementId = agreement.createAgreement(1, address(0x789), address(0xAAA), builders, "ipfs://test");
         
         assertEq(agreementId, 0);
         assertTrue(agreement.isBuilder(address(0x456)));
@@ -135,7 +141,7 @@ contract BuilderAgreementTest is Test {
         address[] memory builders = new address[](1);
         builders[0] = address(0x456);
         
-        uint256 agreementId = agreement.createAgreement(1, address(0x789), builders, "ipfs://test", 100e6);
+        uint256 agreementId = agreement.createAgreement(1, address(0x789), address(0xAAA), builders, "ipfs://test");
         
         // Creator signs
         vm.prank(owner);
