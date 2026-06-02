@@ -105,7 +105,6 @@ contract IdeaFactory is Ownable {
         // Deploy FundingPool
         FundingPool fundingPool = new FundingPool(
             address(USDY),
-            address(0), // IdeaToken address to be set after creation
             address(fundingGate),
             msg.sender,
             config.softCap,
@@ -121,7 +120,8 @@ contract IdeaFactory is Ownable {
             address(fundingPool),
             msg.sender,
             config.builderAllocBps,
-            address(this)
+            address(this),
+            address(USDY)
         );
 
         // Wire FundingPool to IdeaToken (must happen before any deposits)

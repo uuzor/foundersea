@@ -10,7 +10,6 @@ import "../../src/contracts/FundingPool.sol";
 import "../../src/contracts/BuilderAgreement.sol";
 import "../../src/contracts/DAOVoting.sol";
 import "../../src/contracts/IdeaMarketplace.sol";
-import "../../src/contracts/RevenueDistributor.sol";
 import {GateType} from "../../src/contracts/FundingGate.sol";
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 
@@ -41,7 +40,8 @@ contract IdeaTokenTest is Test {
     address public factory = address(0x789);
 
     function setUp() public {
-        ideaToken = new IdeaToken("FounderSea Idea 1", "FSID-1", fundingPool, creator, 2000, factory);
+        address usdy = address(new MockERC20("USDY", "USDY", 6));
+        ideaToken = new IdeaToken("FounderSea Idea 1", "FSID-1", fundingPool, creator, 2000, factory, usdy);
     }
 
     function testTokenMetadata() public {
@@ -67,13 +67,13 @@ contract IdeaTokenTest is Test {
         vm.prank(fundingPool);
         ideaToken.mint(address(0xABC), 1000e18);
         
-        // Set revenue distributor (as the ideaCreator/owner)
-        vm.prank(creator);
-        ideaToken.setRevenueDistributor(address(0xDEF));
+        // Set revenue source (as the factory)
+        vm.prank(factory);
+        ideaToken.setRevenueSource(address(0xDEF));
         
-        // Notify revenue
+        // Notify revenue from revenue source
         vm.prank(address(0xDEF));
-        ideaToken.notifyRevenueToContract(100e6);
+        ideaToken.notifyRevenue(100e6);
         
         // Check earned
         uint256 earned = ideaToken.earned(address(0xABC));
@@ -124,7 +124,7 @@ contract BuilderAgreementTest is Test {
         address[] memory builders = new address[](1);
         builders[0] = address(0x456);
         
-        uint256 agreementId = agreement.createAgreement(1, builders, "ipfs://test", 100e6);
+        uint256 agreementId = agreement.createAgreement(1, address(0x789), builders, "ipfs://test", 100e6);
         
         assertEq(agreementId, 0);
         assertTrue(agreement.isBuilder(address(0x456)));
@@ -135,16 +135,16 @@ contract BuilderAgreementTest is Test {
         address[] memory builders = new address[](1);
         builders[0] = address(0x456);
         
-        uint256 agreementId = agreement.createAgreement(1, builders, "ipfs://test", 100e6);
+        uint256 agreementId = agreement.createAgreement(1, address(0x789), builders, "ipfs://test", 100e6);
         
         // Creator signs
         vm.prank(owner);
         agreement.creatorSign(agreementId);
         assertFalse(agreement.isActive(agreementId));
         
-        // Builder signs
+        // Builder signs with revenue source
         vm.prank(address(0x456));
-        agreement.builderSign(agreementId);
+        agreement.builderSign(agreementId, address(0xABC));
         assertFalse(agreement.isActive(agreementId));
         
         // DAO signs
@@ -290,19 +290,5 @@ contract IdeaMarketplaceTest is Test {
     }
 }
 
-contract RevenueDistributorTest is Test {
-    RevenueDistributor public distributor;
-    address public owner = address(0x123);
-
-    function setUp() public {
-        distributor = new RevenueDistributor(owner);
-    }
-
-    function testRegisterToken() public {
-        vm.prank(owner);
-        distributor.registerToken(address(0x456), address(0x789));
-        
-        // Token should be registered now
-        // No error should be thrown
-    }
-}
+// Note: IdeaToken.claimRevenue() test moved to IdeaTokenTest
+// RevenueDistributor removed - revenue handling moved to IdeaToken directly

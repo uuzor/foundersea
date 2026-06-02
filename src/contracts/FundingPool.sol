@@ -22,13 +22,24 @@ contract FundingPool is Ownable {
     uint256 public hardCap;
     uint256 public raisedAmount;
     uint256 public competitionPrizeBps;
-    uint256 public tokenPrice; // tokens per 1e6 of funding token (USDY has 6 decimals)
     
     bool public fundingClosed;
     bool public builderAssigned;
 
-    // Milestone 0 = competition prize for winning builder
-    // Milestones 1..N = development phases
+    // Competitor payouts: top 3 builders from MVP competition
+    // Released when AI validates their MVPs above competition threshold
+    struct CompetitorPayout {
+        address builder;
+        uint256 amount;
+        bool released;
+        uint256 aiConfidence;
+        string validationIpfsHash;
+    }
+    
+    CompetitorPayout[3] public competitorPayouts; // Exactly 3 slots
+    bool public competitorsSet;
+    
+    // Development milestones (index 0 onwards, after winner selected)
     struct Milestone {
         uint256 amount;
         uint256 deadline;
@@ -40,10 +51,13 @@ contract FundingPool is Ownable {
 
     Milestone[] public milestones;
     
+    uint256 public constant COMPETITION_THRESHOLD = 60;
+    
     event Deposit(address indexed investor, uint256 amount, uint256 tokensMinted);
     event FundingClosed(bool softCapMet);
     event MilestoneReleased(uint256 index, uint256 amount);
     event MilestoneValidated(uint256 index, uint256 confidence);
+    event CompetitorPayoutReleased(uint256 slot, address builder, uint256 amount);
     event BuilderAssigned(address indexed builder);
 
     modifier onlyAIAgent() {
@@ -53,7 +67,6 @@ contract FundingPool is Ownable {
 
     constructor(
         address _fundingToken,
-        address _ideaToken,
         address _gate,
         address _creator,
         uint256 _softCap,
@@ -62,15 +75,12 @@ contract FundingPool is Ownable {
         address _factory
     ) Ownable(_creator) {
         require(_fundingToken != address(0), "Invalid token");
-        require(_ideaToken != address(0), "Invalid idea token");
         fundingToken = IERC20(_fundingToken);
-        ideaToken = _ideaToken;
         gate = _gate;
         softCap = _softCap;
         hardCap = _hardCap;
         competitionPrizeBps = _competitionPrizeBps;
         factory = _factory;
-        tokenPrice = 1e6; // 1:1 initially
     }
 
     function setAiAgent(address _aiAgent) external onlyOwner {
@@ -85,6 +95,10 @@ contract FundingPool is Ownable {
     function setIdeaToken(address _ideaToken) external onlyOwner {
         require(_ideaToken != address(0), "Invalid idea token");
         ideaToken = _ideaToken;
+    }
+
+    function getFundingToken() external view returns (address) {
+        return address(fundingToken);
     }
 
     // Funding round
@@ -125,19 +139,55 @@ contract FundingPool is Ownable {
         bool metSoftCap = raisedAmount >= softCap;
         
         if (metSoftCap) {
-            // Create Milestone 0 (competition prize)
-            uint256 prizeAmount = (raisedAmount * competitionPrizeBps) / 10000;
-            milestones.push(Milestone({
-                amount: prizeAmount,
-                deadline: block.timestamp + 30 days,
-                released: false,
-                aiValidated: false,
-                aiConfidence: 0,
-                validationIpfsHash: ""
-            }));
+            // Competition allocation is carved out, distributed to top 3 later
+            // No milestone[0] created here - competitors are set separately
+            emit FundingClosed(true);
+        } else {
+            emit FundingClosed(false);
         }
+    }
+
+    // Set top 3 competitors after funding closes
+    // amounts should sum to competitionPrizeBps portion of raised
+    function setCompetitorPayouts(
+        address[3] calldata _builders,
+        uint256[3] calldata _amounts
+    ) external onlyOwner {
+        require(fundingClosed, "Funding not closed");
+        require(!competitorsSet, "Competitors already set");
+        require(raisedAmount >= softCap, "Soft cap not met");
         
-        emit FundingClosed(metSoftCap);
+        competitorsSet = true;
+        for (uint256 i = 0; i < 3; i++) {
+            competitorPayouts[i].builder = _builders[i];
+            competitorPayouts[i].amount = _amounts[i];
+            competitorPayouts[i].released = false;
+        }
+    }
+
+    // AI validates competitor's MVP
+    function validateCompetitor(
+        uint256 slot,
+        uint256 confidence,
+        string calldata ipfsHash
+    ) external onlyAIAgent {
+        require(slot < 3, "Invalid slot");
+        CompetitorPayout storage p = competitorPayouts[slot];
+        require(p.builder != address(0), "Competitor not set");
+        p.aiConfidence = confidence;
+        p.validationIpfsHash = ipfsHash;
+    }
+
+    // AI releases payout when MVP validated above threshold
+    function releaseCompetitorPayout(uint256 slot) external onlyAIAgent {
+        require(slot < 3, "Invalid slot");
+        CompetitorPayout storage p = competitorPayouts[slot];
+        require(p.aiConfidence >= COMPETITION_THRESHOLD, "Threshold not met");
+        require(!p.released, "Already released");
+        
+        p.released = true;
+        fundingToken.safeTransfer(p.builder, p.amount);
+        emit CompetitorPayoutReleased(slot, p.builder, p.amount);
     }
 
     function checkSoftCapMet() public view returns (bool) {
