@@ -37,14 +37,13 @@ contract FundingGate is Ownable {
         gateType = _gateType;
         
         if (_gateType == GateType.WHITELIST && params.length > 0) {
-            // Params can contain initial whitelist addresses
+            // Params can contain initial whitelist addresses (not implemented - use updateWhitelist)
         }
         if (_gateType == GateType.MIN_HOLD && params.length >= 64) {
-            holdToken = address(uint160(uint256(keccak256(params[:32]))));
-            minHoldAmount = uint256(keccak256(params[32:64]));
+            (holdToken, minHoldAmount) = abi.decode(params, (address, uint256));
         }
         if (_gateType == GateType.DAO_CURATED && params.length >= 32) {
-            daoApprover = address(uint160(uint256(keccak256(params[:32]))));
+            (daoApprover) = abi.decode(params, (address));
         }
         
         emit GateTypeSet(_gateType);

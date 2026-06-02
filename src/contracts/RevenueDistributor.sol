@@ -67,7 +67,9 @@ contract RevenueDistributor is Ownable {
         amount = token.earned(msg.sender);
         require(amount > 0, "Nothing to claim");
         
-        token.claimRevenue();
+        // Transfer USDY directly to holder
+        IERC20(config.revenueToken).safeTransfer(msg.sender, amount);
+        
         emit RevenueClaimed(msg.sender, _ideaToken, amount);
     }
 

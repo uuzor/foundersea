@@ -67,9 +67,17 @@ contract IdeaToken is ERC20, Ownable {
         revenuePerTokenStored += (amount * 1e18) / totalSupply();
     }
 
+    // Note: claimRevenue was removed - RevenueDistributor handles all USDY payouts
+    // The token just tracks revenuePerTokenStored for the earned() view function
+
     // Gated minting — only FundingPool during funding round
     function mint(address to, uint256 amount) external onlyFundingPool {
         _mint(to, amount);
+    }
+
+    // Gated burn — only FundingPool for refunds
+    function burn(address from, uint256 amount) external onlyFundingPool {
+        _burn(from, amount);
     }
 
     // Called once, after BuilderAgreement signed
