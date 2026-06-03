@@ -7,10 +7,11 @@ import "../src/contracts/AgentIdentity.sol";
 import "../src/contracts/IdeaFactory.sol";
 import "../src/contracts/DAOVoting.sol";
 import "../src/contracts/IdeaMarketplace.sol";
+import "../src/contracts/FundingPoolFactory.sol";
+import "../src/contracts/IdeaTokenFactory.sol";
 
 contract Deploy is Script {
     // USDY addresses - update with actual addresses after deployment
-    // These are placeholder addresses - replace with real USDY addresses
     address constant USDY_MANTLE_SEPOLIA = 0x0000000000000000000000000000000000000001;
     address constant USDY_BASE_SEPOLIA = 0x0000000000000000000000000000000000000002;
     
@@ -33,19 +34,30 @@ contract Deploy is Script {
         agentIdentity.mintAgent("FounderSea AI", "kimi-k2-6");
         console.log("AI Agent minted. Agent ID:", agentIdentity.agentId());
         
-        // Deploy IdeaFactory
+        // Deploy FundingPoolFactory and IdeaTokenFactory first
+        console.log("Deploying FundingPoolFactory...");
+        FundingPoolFactory fundingPoolFactory = new FundingPoolFactory(deployer);
+        console.log("FundingPoolFactory deployed:", address(fundingPoolFactory));
+        
+        console.log("Deploying IdeaTokenFactory...");
+        IdeaTokenFactory ideaTokenFactory = new IdeaTokenFactory(deployer);
+        console.log("IdeaTokenFactory deployed:", address(ideaTokenFactory));
+        
+        // Deploy IdeaFactory with factory addresses
         console.log("Deploying IdeaFactory...");
         address treasury = vm.envOr("FOUNDERSEA_TREASURY", deployer);
         
-        // Use placeholder USDY - will need to be updated after deployment
         address usdyAddress = USDY_MANTLE_SEPOLIA;
         if (block.chainid == 84532) {
-            // Base Sepolia
             usdyAddress = USDY_BASE_SEPOLIA;
         }
         
         IdeaFactory ideaFactory = new IdeaFactory(usdyAddress, treasury, deployer);
         console.log("IdeaFactory deployed:", address(ideaFactory));
+        
+        // Set factories in IdeaFactory
+        ideaFactory.setFactories(address(fundingPoolFactory), address(ideaTokenFactory));
+        console.log("Factories set in IdeaFactory");
         
         // Set AI agent in IdeaFactory
         address aiAgentAddr = vm.envOr("AI_AGENT_ADDRESS", address(0));
@@ -80,6 +92,8 @@ contract Deploy is Script {
         console.log("       DEPLOYMENT SUMMARY");
         console.log("==========================================");
         console.log("AgentIdentity:", address(agentIdentity));
+        console.log("FundingPoolFactory:", address(fundingPoolFactory));
+        console.log("IdeaTokenFactory:", address(ideaTokenFactory));
         console.log("IdeaFactory:", address(ideaFactory));
         console.log("DAOVoting:", address(daoVoting));
         console.log("IdeaMarketplace:", address(marketplace));
@@ -89,13 +103,13 @@ contract Deploy is Script {
         console.log("");
         console.log("NEXT STEPS:");
         console.log("1. Update .env with deployed addresses:");
+        console.log("   FUNDING_POOL_FACTORY=<address>");
+        console.log("   IDEA_TOKEN_FACTORY=<address>");
         console.log("   IDEA_FACTORY=<factory_address>");
         console.log("   AGENT_IDENTITY=<agent_identity_address>");
         console.log("   DAO_VOTING=<dao_voting_address>");
         console.log("   IDEA_MARKETPLACE=<marketplace_address>");
-        console.log("");
-        console.log("2. Update IdeaFactory with correct USDY address");
-        console.log("3. Set AI agent address if not set via env");
+        console.log("2. Update contracts with real USDY address");
         console.log("==========================================");
     }
 }

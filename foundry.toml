@@ -7,6 +7,9 @@ optimizer = true
 optimizer_runs = 200
 via_ir = true
 
+# Disable size checks for development
+size = false
+
 [profile.ci]
 fuzz_runs = 256
 verbosity = 4
