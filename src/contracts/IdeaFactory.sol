@@ -258,6 +258,7 @@ contract IdeaFactory is Ownable {
         bytes memory buffer = new bytes(digits);
         while (value != 0) {
             digits -= 1;
+            // forge-lint-disable-line unsafe-typecast
             buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
             value /= 10;
         }
