@@ -58,7 +58,8 @@ contract AgentIdentity is ERC721, Ownable {
         agentName = name;
         modelId = _modelId;
         creationTime = block.timestamp;
-        aiAgent = msg.sender; // The AI agent address
+        // Note: aiAgent is set via setAiAgent() after deployment, NOT here
+        // This allows the backend to control the AI agent wallet separately
         
         _safeMint(owner(), agentId);
         emit AgentMinted(owner(), name, _modelId);

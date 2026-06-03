@@ -9,6 +9,15 @@ import "./interfaces/IFundingGate.sol";
 
 contract FundingPool is Ownable {
     using SafeERC20 for IERC20;
+    
+    // Milestone status enum for clean state machine
+    enum MilestoneStatus {
+        PENDING,    // Created, awaiting submission
+        SUBMITTED,  // Builder submitted, awaiting AI validation
+        VALIDATED,  // AI validated, funds ready for release
+        RELEASED,   // Funds released to builder
+        DISPUTED    // Under dispute resolution
+    }
 
     IERC20 public fundingToken;
     address public ideaToken;
@@ -43,8 +52,7 @@ contract FundingPool is Ownable {
     struct Milestone {
         uint256 amount;
         uint256 deadline;
-        bool released;
-        bool aiValidated;
+        MilestoneStatus status;   // Use enum instead of booleans
         uint256 aiConfidence;
         string validationIpfsHash;
     }
@@ -218,8 +226,7 @@ contract FundingPool is Ownable {
             milestones.push(Milestone({
                 amount: milestoneAmounts[i],
                 deadline: milestoneDeadlines[i],
-                released: false,
-                aiValidated: false,
+                status: MilestoneStatus.PENDING,
                 aiConfidence: 0,
                 validationIpfsHash: ""
             }));
@@ -231,9 +238,9 @@ contract FundingPool is Ownable {
     // AI agent calls this after milestone validation passes
     function releaseMilestone(uint256 index) external onlyAIAgent {
         Milestone storage m = milestones[index];
-        require(m.aiValidated && m.aiConfidence >= 75 && !m.released, "Validation not passed");
+        require(m.status == MilestoneStatus.VALIDATED && m.aiConfidence >= 75, "Not validated or low confidence");
         require(builder != address(0), "No builder");
-        m.released = true;
+        m.status = MilestoneStatus.RELEASED;
         fundingToken.safeTransfer(builder, m.amount);
         emit MilestoneReleased(index, m.amount);
     }
@@ -242,8 +249,8 @@ contract FundingPool is Ownable {
     function daoReleaseMilestone(uint256 index) external {
         require(msg.sender == dao, "Only DAO");
         Milestone storage m = milestones[index];
-        require(!m.released, "Already released");
-        m.released = true;
+        require(m.status == MilestoneStatus.VALIDATED, "Not validated");
+        m.status = MilestoneStatus.RELEASED;
         fundingToken.safeTransfer(builder, m.amount);
         emit MilestoneReleased(index, m.amount);
     }
@@ -263,10 +270,26 @@ contract FundingPool is Ownable {
         string calldata ipfsHash
     ) external onlyAIAgent {
         require(index < milestones.length, "Invalid index");
-        milestones[index].aiValidated = confidence >= 50;
-        milestones[index].aiConfidence = confidence;
-        milestones[index].validationIpfsHash = ipfsHash;
+        Milestone storage m = milestones[index];
+        m.status = confidence >= 50 ? MilestoneStatus.VALIDATED : MilestoneStatus.SUBMITTED;
+        m.aiConfidence = confidence;
+        m.validationIpfsHash = ipfsHash;
         emit MilestoneValidated(index, confidence);
+    }
+    
+    // Mark milestone as submitted (builder calls this when they complete work)
+    function submitMilestone(uint256 index) external {
+        require(msg.sender == builder, "Only builder");
+        require(index < milestones.length, "Invalid index");
+        Milestone storage m = milestones[index];
+        require(m.status == MilestoneStatus.PENDING, "Not pending");
+        m.status = MilestoneStatus.SUBMITTED;
+    }
+    
+    // Get milestone status as enum value
+    function getMilestoneStatus(uint256 index) external view returns (MilestoneStatus) {
+        require(index < milestones.length, "Invalid index");
+        return milestones[index].status;
     }
 
     // Refund if soft cap not met
@@ -294,8 +317,7 @@ contract FundingPool is Ownable {
             milestones.push(Milestone({
                 amount: amounts[i],
                 deadline: deadlines[i],
-                released: false,
-                aiValidated: false,
+                status: MilestoneStatus.PENDING,
                 aiConfidence: 0,
                 validationIpfsHash: ""
             }));

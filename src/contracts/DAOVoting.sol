@@ -11,7 +11,10 @@ contract DAOVoting is Ownable {
     
     // Per-token-holder delegation
     mapping(address => bool) public delegatedToAI;
-    address[] public delegatedHolders; // Track all delegated holders for power calculation
+    address[] public delegatedHolders; // Track all delegated holders for history
+    
+    // Running total for O(1) power calculation instead of O(n) loop
+    uint256 public totalDelegatedPower;
     
     // Active proposals
     struct Proposal {
@@ -64,12 +67,14 @@ contract DAOVoting is Ownable {
         require(!delegatedToAI[msg.sender], "Already delegated");
         delegatedToAI[msg.sender] = true;
         delegatedHolders.push(msg.sender);
+        totalDelegatedPower += ideaToken.balanceOf(msg.sender);
         emit VoteDelegatedToAI(msg.sender);
     }
 
     function revokeDelegation() external {
         require(delegatedToAI[msg.sender], "Not delegated");
         delegatedToAI[msg.sender] = false;
+        totalDelegatedPower -= ideaToken.balanceOf(msg.sender);
         emit DelegationRevoked(msg.sender);
     }
 
@@ -146,13 +151,7 @@ contract DAOVoting is Ownable {
     }
 
     function _getTotalDelegatedPower() internal view returns (uint256) {
-        uint256 totalPower;
-        for (uint256 i = 0; i < delegatedHolders.length; i++) {
-            if (delegatedToAI[delegatedHolders[i]]) {
-                totalPower += ideaToken.balanceOf(delegatedHolders[i]);
-            }
-        }
-        return totalPower;
+        return totalDelegatedPower;
     }
 
     function execute(uint256 proposalId) external {

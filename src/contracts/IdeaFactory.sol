@@ -15,6 +15,18 @@ import {GateType as FactoryGateType, GateType} from "./FundingGate.sol";
 contract IdeaFactory is Ownable {
     using SafeERC20 for IERC20;
     using Strings for uint256;
+    
+    // Idea status enum for clean state machine tracking
+    enum IdeaStatus {
+        PENDING,      // Just created, awaiting AI review
+        APPROVED,      // AI approved, funding can proceed
+        REJECTED,      // AI rejected
+        ABANDONED,     // Creator abandoned
+        FUNDING,       // Funding pool active
+        ACTIVE,        // Builder assigned, in development
+        COMPLETED,     // All milestones done
+        FAILED        // Soft cap not met or other failure
+    }
 
     IERC20 public immutable USDY;
     uint256 public constant MIN_CREATOR_DEPOSIT = 500e6; // $500 USDY
@@ -42,11 +54,9 @@ contract IdeaFactory is Ownable {
         address ideaToken;
         address fundingPool;
         address fundingGate;
-        bool aiApproved;
+        IdeaStatus status;          // Use enum instead of boolean soup
         uint256 aiScore;
         string approvalReasonHash;
-        bool rejected;
-        bool abandoned;
         IdeaConfig config;
     }
 
@@ -126,11 +136,9 @@ contract IdeaFactory is Ownable {
             ideaToken: ideaToken,
             fundingPool: fundingPool,
             fundingGate: fundingGate,
-            aiApproved: false,
+            status: IdeaStatus.PENDING,
             aiScore: 0,
             approvalReasonHash: "",
-            rejected: false,
-            abandoned: false,
             config: config
         });
 
@@ -187,10 +195,10 @@ contract IdeaFactory is Ownable {
     function aiApproveIdea(uint256 ideaId, uint256 score, string calldata reasonHash)
         external {
         require(msg.sender == aiAgent, "Only AI agent");
-        require(!ideas[ideaId].aiApproved && !ideas[ideaId].rejected, "Already processed");
+        require(ideas[ideaId].status == IdeaStatus.PENDING, "Not pending");
         require(score >= 50, "Score too low"); // Minimum score threshold
         
-        ideas[ideaId].aiApproved = true;
+        ideas[ideaId].status = IdeaStatus.APPROVED;
         ideas[ideaId].aiScore = score;
         ideas[ideaId].approvalReasonHash = reasonHash;
         aiApproved[ideaId] = true;
@@ -200,9 +208,9 @@ contract IdeaFactory is Ownable {
 
     function aiRejectIdea(uint256 ideaId, string calldata reasonHash) external {
         require(msg.sender == aiAgent, "Only AI agent");
-        require(!ideas[ideaId].rejected, "Already rejected");
+        require(ideas[ideaId].status == IdeaStatus.PENDING, "Not pending");
         
-        ideas[ideaId].rejected = true;
+        ideas[ideaId].status = IdeaStatus.REJECTED;
         
         // Refund 90% to creator, 10% to treasury
         uint256 refundAmount = (MIN_CREATOR_DEPOSIT * (10000 - ABANDONMENT_FEE_BPS)) / 10000;
@@ -214,14 +222,9 @@ contract IdeaFactory is Ownable {
 
     function abandonIdea(uint256 ideaId) external {
         require(ideas[ideaId].creator == msg.sender, "Not creator");
-        require(!ideas[ideaId].aiApproved && !ideas[ideaId].rejected, "Already processed");
-        require(!ideas[ideaId].abandoned, "Already abandoned");
-        require(!ideas[ideaId].aiApproved, "Cannot abandon approved idea");
+        require(ideas[ideaId].status == IdeaStatus.PENDING, "Not pending");
         
-        // Check that funding hasn't started (no deposits)
-        // This is a simplified check - in production you'd check the funding pool state
-        
-        ideas[ideaId].abandoned = true;
+        ideas[ideaId].status = IdeaStatus.ABANDONED;
         
         // Same refund logic: 90% back, 10% fee
         uint256 refundAmount = (MIN_CREATOR_DEPOSIT * (10000 - ABANDONMENT_FEE_BPS)) / 10000;
@@ -229,6 +232,22 @@ contract IdeaFactory is Ownable {
         USDY.safeTransfer(treasury, MIN_CREATOR_DEPOSIT - refundAmount);
         
         emit IdeaAbandoned(ideaId, refundAmount);
+    }
+    
+    // Update status for funding/active states (called by funding pool or external logic)
+    function updateIdeaStatus(uint256 ideaId, IdeaStatus newStatus) external {
+        // Only allow transitions that make sense
+        IdeaStatus current = ideas[ideaId].status;
+        if (newStatus == IdeaStatus.FUNDING) {
+            require(current == IdeaStatus.APPROVED, "Must be approved first");
+        } else if (newStatus == IdeaStatus.ACTIVE) {
+            require(current == IdeaStatus.FUNDING, "Must complete funding first");
+        }
+        ideas[ideaId].status = newStatus;
+    }
+    
+    function getIdeaStatus(uint256 ideaId) external view returns (IdeaStatus) {
+        return ideas[ideaId].status;
     }
 
     function isIdeaApproved(uint256 ideaId) external view returns (bool) {
@@ -240,10 +259,9 @@ contract IdeaFactory is Ownable {
         address ideaToken,
         address fundingPool,
         address fundingGate,
-        bool aiApprovedFlag,
+        IdeaStatus status,
         uint256 aiScore,
-        bool rejected,
-        bool abandoned
+        string memory approvalReasonHash
     ) {
         Idea storage idea = ideas[ideaId];
         return (
@@ -251,10 +269,9 @@ contract IdeaFactory is Ownable {
             idea.ideaToken,
             idea.fundingPool,
             idea.fundingGate,
-            idea.aiApproved,
+            idea.status,
             idea.aiScore,
-            idea.rejected,
-            idea.abandoned
+            idea.approvalReasonHash
         );
     }
 
