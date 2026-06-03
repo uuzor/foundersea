@@ -4,14 +4,17 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
-import "./IdeaToken.sol";
-import "./FundingGate.sol";
-import "./FundingPool.sol";
+import "@openzeppelin/contracts/utils/Strings.sol";
+import "./interfaces/IFundingPoolFactory.sol";
+import "./interfaces/IIdeaTokenFactory.sol";
 import "./interfaces/IIdeaToken.sol";
-import {GateType as FactoryGateType} from "./FundingGate.sol";
+import "./FundingPool.sol";
+import "./FundingGate.sol";
+import {GateType as FactoryGateType, GateType} from "./FundingGate.sol";
 
 contract IdeaFactory is Ownable {
     using SafeERC20 for IERC20;
+    using Strings for uint256;
 
     IERC20 public immutable USDY;
     uint256 public constant MIN_CREATOR_DEPOSIT = 500e6; // $500 USDY
@@ -19,10 +22,8 @@ contract IdeaFactory is Ownable {
     address public aiAgent;
     address public treasury;
     address public agentIdentity;
-
-    // Token name and symbol prefix
-    string public constant TOKEN_NAME_PREFIX = "FounderSea Idea ";
-    string public constant TOKEN_SYMBOL_PREFIX = "FSID-";
+    IFundingPoolFactory public fundingPoolFactory;
+    IIdeaTokenFactory public ideaTokenFactory;
 
     struct IdeaConfig {
         string metadataIpfsHash;     // title, description, roadmap, category
@@ -65,7 +66,11 @@ contract IdeaFactory is Ownable {
     event FundingPoolConfigured(uint256 indexed ideaId, address fundingPool);
     event RevenueSourceWired(uint256 indexed ideaId, address revenueSource);
 
-    constructor(address _usdy, address _treasury, address _owner) Ownable(_owner) {
+    constructor(
+        address _usdy, 
+        address _treasury, 
+        address _owner
+    ) Ownable(_owner) {
         require(_usdy != address(0), "Invalid USDY");
         USDY = IERC20(_usdy);
         treasury = _treasury != address(0) ? _treasury : _owner;
@@ -83,6 +88,11 @@ contract IdeaFactory is Ownable {
         agentIdentity = _agentIdentity;
     }
 
+    function setFactories(address _fundingPoolFactory, address _ideaTokenFactory) external onlyOwner {
+        fundingPoolFactory = IFundingPoolFactory(_fundingPoolFactory);
+        ideaTokenFactory = IIdeaTokenFactory(_ideaTokenFactory);
+    }
+
     function createIdea(IdeaConfig calldata config) external returns (uint256 ideaId) {
         require(config.softCap <= config.hardCap, "Invalid caps");
         require(config.targetRaise >= config.softCap, "Invalid target");
@@ -93,48 +103,29 @@ contract IdeaFactory is Ownable {
         USDY.safeTransferFrom(msg.sender, address(this), MIN_CREATOR_DEPOSIT);
 
         ideaId = nextIdeaId++;
-        
-        // Generate token name and symbol
-        string memory tokenName = string(abi.encodePacked(TOKEN_NAME_PREFIX, _toString(ideaId)));
-        string memory tokenSymbol = string(abi.encodePacked(TOKEN_SYMBOL_PREFIX, _toString(ideaId)));
 
-        // Deploy FundingGate
-        FundingGate fundingGate = new FundingGate(msg.sender, address(this));
-        if (config.gateType != FactoryGateType.OPEN) {
-            fundingGate.setGateType(GateType(config.gateType), config.gateParams);
-        }
-
-        // Deploy FundingPool
-        FundingPool fundingPool = new FundingPool(
-            address(USDY),
-            address(fundingGate),
-            msg.sender,
-            config.softCap,
-            config.hardCap,
+        // Deploy FundingPool and FundingGate via factory
+        (address fundingPool, address fundingGate) = _deployFundingPool(
+            ideaId, 
+            config.softCap, 
+            config.hardCap, 
             config.competitionPrizeBps,
-            address(this)
+            config.gateType,
+            config.gateParams
         );
 
-        // Deploy IdeaToken
-        IdeaToken ideaToken = new IdeaToken(
-            tokenName,
-            tokenSymbol,
-            address(fundingPool),
-            msg.sender,
-            config.builderAllocBps,
-            address(this),
-            address(USDY)
-        );
+        // Deploy IdeaToken via factory
+        address ideaToken = _deployIdeaToken(ideaId, fundingPool, msg.sender, config.builderAllocBps);
 
-        // Wire FundingPool to IdeaToken (must happen before any deposits)
-        fundingPool.setIdeaToken(address(ideaToken));
+        // Wire FundingPool to IdeaToken
+        FundingPool(fundingPool).setIdeaToken(ideaToken);
 
         // Create the idea
         ideas[ideaId] = Idea({
             creator: msg.sender,
-            ideaToken: address(ideaToken),
-            fundingPool: address(fundingPool),
-            fundingGate: address(fundingGate),
+            ideaToken: ideaToken,
+            fundingPool: fundingPool,
+            fundingGate: fundingGate,
             aiApproved: false,
             aiScore: 0,
             approvalReasonHash: "",
@@ -143,12 +134,53 @@ contract IdeaFactory is Ownable {
             config: config
         });
 
-        ideaTokens[ideaId] = address(ideaToken);
-        fundingPools[ideaId] = address(fundingPool);
+        ideaTokens[ideaId] = ideaToken;
+        fundingPools[ideaId] = fundingPool;
         creatorIdeas[msg.sender].push(ideaId);
 
-        emit IdeaCreated(ideaId, msg.sender, address(ideaToken), address(fundingPool));
-        emit FundingPoolConfigured(ideaId, address(fundingPool));
+        emit IdeaCreated(ideaId, msg.sender, ideaToken, fundingPool);
+        emit FundingPoolConfigured(ideaId, fundingPool);
+    }
+
+    function _deployFundingPool(
+        uint256 ideaId,
+        uint256 softCap,
+        uint256 hardCap,
+        uint256 competitionPrizeBps,
+        FactoryGateType gateType,
+        bytes memory gateParams
+    ) internal returns (address fundingPool, address fundingGate) {
+        (address fp, address fg) = fundingPoolFactory.createFundingPool(
+            ideaId,
+            address(USDY),
+            msg.sender,
+            softCap,
+            hardCap,
+            competitionPrizeBps,
+            treasury
+        );
+        
+        if (gateType != FactoryGateType.OPEN) {
+            FundingGate(fg).setGateType(GateType(gateType), gateParams);
+        }
+        
+        return (fp, fg);
+    }
+
+    function _deployIdeaToken(
+        uint256 ideaId,
+        address fundingPool,
+        address creator,
+        uint256 builderAllocBps
+    ) internal returns (address) {
+        return ideaTokenFactory.createIdeaToken(
+            ideaId,
+            fundingPool,
+            creator,
+            builderAllocBps,
+            address(this),
+            address(USDY)
+        );
     }
 
     // Called by AI agent after scoring. If rejected, creator gets 90% back.
@@ -245,23 +277,5 @@ contract IdeaFactory is Ownable {
         require(ideas[ideaId].creator == msg.sender, "Not creator");
         require(builderAgreements[ideaId] == address(0), "Already registered");
         builderAgreements[ideaId] = agreement;
-    }
-
-    function _toString(uint256 value) internal pure returns (string memory) {
-        if (value == 0) return "0";
-        uint256 temp = value;
-        uint256 digits;
-        while (temp != 0) {
-            digits++;
-            temp /= 10;
-        }
-        bytes memory buffer = new bytes(digits);
-        while (value != 0) {
-            digits -= 1;
-            // forge-lint-disable-line unsafe-typecast
-            buffer[digits] = bytes1(uint8(48 + uint256(value % 10)));
-            value /= 10;
-        }
-        return string(buffer);
     }
 }
