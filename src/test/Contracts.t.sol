@@ -246,10 +246,19 @@ contract AgentIdentityTest is Test {
 
 contract DAOVotingTest is Test {
     DAOVoting public daoVoting;
+    MockERC20 public ideaToken;
     address public owner = address(0x123);
 
     function setUp() public {
         daoVoting = new DAOVoting(owner);
+        ideaToken = new MockERC20("Idea Token", "IDEA", 18);
+        
+        // Set IdeaToken so delegation can read balances (owner only)
+        vm.prank(owner);
+        daoVoting.setIdeaToken(address(ideaToken));
+        
+        // Mint some tokens to test address
+        ideaToken.mint(address(0x456), 100e18);
     }
 
     function testDelegation() public {
@@ -340,7 +349,8 @@ contract FundingPoolTest is Test {
             address(fundingToken)
         );
         
-        // Wire fundingPool to ideaToken (test contract is owner)
+        // Wire fundingPool to ideaToken (prank factory address since setIdeaToken is onlyFactory)
+        vm.prank(factory);
         fundingPool.setIdeaToken(address(ideaToken));
         fundingPool.setAiAgent(aiAgent);
         fundingPool.setDao(dao);
@@ -584,13 +594,13 @@ contract FundingPoolTest is Test {
         vm.prank(owner);
         fundingPool.assignBuilder(builder, amounts, deadlines);
         
-        // AI validates with low confidence
+        // AI validates with low confidence (below 50 threshold, stays SUBMITTED)
         vm.prank(aiAgent);
-        fundingPool.setMilestoneValidated(0, 60, "ipfs://low_confidence");
+        fundingPool.setMilestoneValidated(0, 30, "ipfs://low_confidence");
         
-        // Try to release - should fail
+        // Try to release - should fail because status is SUBMITTED not VALIDATED
         vm.prank(aiAgent);
-        vm.expectRevert("Validation not passed");
+        vm.expectRevert("Not validated or low confidence");
         fundingPool.releaseMilestone(0);
     }
 }
