@@ -4,8 +4,9 @@ pragma solidity ^0.8.24;
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./FundingGate.sol";
 import "./FundingPool.sol";
+import "./interfaces/IFundingPoolFactory.sol";
 
-contract FundingPoolFactory is Ownable {
+contract FundingPoolFactory is Ownable, IFundingPoolFactory {
     constructor(address initialOwner) Ownable(initialOwner) {}
 
     event FundingPoolCreated(
@@ -18,25 +19,36 @@ contract FundingPoolFactory is Ownable {
 
     function createFundingPool(
         uint256 ideaId,
-        IERC20 usdy,
+        address usdy,
         address creator,
         uint256 softCap,
         uint256 hardCap,
         uint256 competitionPrizeBps,
         address treasury
-    ) external onlyOwner returns (FundingPool fundingPool, FundingGate gate) {
-        gate = new FundingGate(creator, msg.sender);
-        
-        fundingPool = new FundingPool(
-            address(usdy),
-            address(gate),
-            creator,
+    ) external override returns (address fundingPool, address fundingGate) {
+        address gate = address(new FundingGate(creator, msg.sender));
+
+        // Deploy pool with factory as owner so factory can call updateFactory
+        FundingPool pool = new FundingPool(
+            usdy,
+            gate,
+            address(this),  // Factory becomes owner
             softCap,
             hardCap,
             competitionPrizeBps,
             treasury
         );
         
-        emit FundingPoolCreated(ideaId, address(fundingPool), address(gate), softCap, hardCap);
+        // Update factory to this address and transfer ownership to treasury
+        pool.updateFactory(address(this), treasury);
+        
+        fundingPool = address(pool);
+        fundingGate = gate;
+
+        emit FundingPoolCreated(ideaId, fundingPool, fundingGate, softCap, hardCap);
+    }
+
+    function setIdeaTokenOnPool(address fundingPool, address ideaToken) external onlyOwner {
+        FundingPool(fundingPool).setIdeaToken(ideaToken);
     }
 }

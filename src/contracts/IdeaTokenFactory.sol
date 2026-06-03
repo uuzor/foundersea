@@ -24,7 +24,7 @@ contract IdeaTokenFactory is Ownable {
         uint256 builderAllocBps,
         address factory,
         address usdy
-    ) external onlyOwner returns (IdeaToken token) {
+    ) external returns (IdeaToken token) {
         string memory tokenName = string(abi.encodePacked(TOKEN_NAME_PREFIX, _toString(ideaId)));
         string memory tokenSymbol = string(abi.encodePacked(TOKEN_SYMBOL_PREFIX, _toString(ideaId)));
         

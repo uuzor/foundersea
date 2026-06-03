@@ -117,8 +117,8 @@ contract IdeaFactory is Ownable {
         // Deploy IdeaToken via factory
         address ideaToken = _deployIdeaToken(ideaId, fundingPool, msg.sender, config.builderAllocBps);
 
-        // Wire FundingPool to IdeaToken
-        FundingPool(fundingPool).setIdeaToken(ideaToken);
+        // Wire FundingPool to IdeaToken (via factory since factory is owner)
+        fundingPoolFactory.setIdeaTokenOnPool(fundingPool, ideaToken);
 
         // Create the idea
         ideas[ideaId] = Idea({
