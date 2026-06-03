@@ -83,6 +83,16 @@ contract FundingPool is Ownable {
         factory = _factory;
     }
 
+    // Update factory address and optionally transfer ownership (called by current factory or owner)
+    function updateFactory(address _factory, address newOwner) external {
+        require(msg.sender == factory || msg.sender == owner(), "Only factory or owner");
+        require(_factory != address(0), "Invalid factory");
+        factory = _factory;
+        if (newOwner != address(0) && newOwner != owner()) {
+            transferOwnership(newOwner);
+        }
+    }
+
     function setAiAgent(address _aiAgent) external onlyOwner {
         aiAgent = _aiAgent;
     }
@@ -91,8 +101,13 @@ contract FundingPool is Ownable {
         dao = _dao;
     }
 
+    modifier onlyFactory() {
+        require(msg.sender == factory, "Only factory");
+        _;
+    }
+
     // Called by factory after IdeaToken is deployed
-    function setIdeaToken(address _ideaToken) external onlyOwner {
+    function setIdeaToken(address _ideaToken) external onlyFactory {
         require(_ideaToken != address(0), "Invalid idea token");
         ideaToken = _ideaToken;
     }

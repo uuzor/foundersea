@@ -2,3 +2,4 @@ broadcast/*.json
 cache/*.json
 out/
 .env
+node_modules/
