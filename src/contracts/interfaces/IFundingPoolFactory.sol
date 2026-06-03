@@ -16,4 +16,6 @@ interface IFundingPoolFactory {
         uint256 competitionPrizeBps,
         address treasury
     ) external returns (address fundingPool, address fundingGate);
+
+    function setIdeaTokenOnPool(address fundingPool, address ideaToken) external;
 }
