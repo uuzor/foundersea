@@ -121,7 +121,7 @@ contract DAOVoting is Ownable {
         uint256 proposalId,
         bool support,
         uint256 confidence,
-        string calldata reasoningIpfsHash
+        string calldata /* reasoningIpfsHash - stored off-chain, hash recorded in events */
     ) external onlyAIAgent {
         require(proposals[proposalId].created, "Proposal not found");
         require(!aiHasVoted[proposalId], "AI already voted");

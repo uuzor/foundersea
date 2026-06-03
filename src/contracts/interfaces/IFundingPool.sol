@@ -7,8 +7,12 @@ interface IFundingPool {
     function closeFunding() external;
     function releaseMilestone(uint256 index) external;
     function daoReleaseMilestone(uint256 index) external;
-    function slashBuilder(uint256 amount) external;
+    function slashCompetitorPayout(uint256 slot) external;
     function setMilestoneValidated(uint256 index, uint256 confidence, string calldata ipfsHash) external;
     function fundingClosed() external view returns (bool);
     function builderAssigned() external view returns (bool);
+    function raisedAmount() external view returns (uint256);
+    function softCap() external view returns (uint256);
+    function competitorPayouts(uint256 slot) external view returns (address builder, uint256 amount, bool released, uint256 aiConfidence, string memory validationIpfsHash);
+    function competitorsSet() external view returns (bool);
 }
