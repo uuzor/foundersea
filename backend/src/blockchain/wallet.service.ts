@@ -1,16 +1,34 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
-import { ethers, Wallet, JsonRpcProvider, TransactionResponse } from 'ethers';
+import { ethers, Wallet, JsonRpcProvider, TransactionResponse, Contract, Interface } from 'ethers';
+import { AgentIdentityABI, DecisionType } from './abi/AgentIdentity';
+
+export interface RecordDecisionParams {
+  decisionType: DecisionType;
+  subjectId: number;
+  inputHash: string;
+  outputHash: string;
+  confidence: number;
+  reasoningIpfsHash: string;
+}
+
+export interface RecordDecisionResult {
+  txHash: string;
+  blockNumber: number;
+  decisionIndex: number;
+}
 
 @Injectable()
 export class WalletService {
   private readonly logger = new Logger(WalletService.name);
-  private wallet: Wallet | null = null  ;
+  private wallet: Wallet | null = null;
   private providers: Map<string, JsonRpcProvider> = new Map();
+  private contracts: Map<string, Contract> = new Map();
 
   constructor(private readonly configService: ConfigService) {
     this.initializeWallet();
     this.initializeProviders();
+    this.initializeContracts();
   }
 
   private initializeWallet(): void {
@@ -27,6 +45,36 @@ export class WalletService {
     this.providers.set('robinhood', new JsonRpcProvider(this.configService.robinhoodChainRpc));
     this.providers.set('mantle', new JsonRpcProvider(this.configService.mantleSepoliaRpc));
     this.providers.set('base', new JsonRpcProvider(this.configService.baseSepoliaRpc));
+  }
+
+  private initializeContracts(): void {
+    // Initialize AgentIdentity contract on each chain
+    const chains = ['mantle', 'base', 'robinhood'];
+    chains.forEach((chain) => {
+      const address = this.getAgentIdentityAddress(chain);
+      if (address && this.wallet) {
+        const provider = this.providers.get(chain);
+        if (provider) {
+          const signer = this.wallet.connect(provider);
+          const contract = new Contract(address, AgentIdentityABI, signer);
+          this.contracts.set(`agentIdentity_${chain}`, contract);
+          this.logger.log(`AgentIdentity signer initialized on ${chain}: ${address}`);
+        }
+      }
+    });
+  }
+
+  private getAgentIdentityAddress(chain: string): string {
+    switch (chain) {
+      case 'mantle':
+        return this.configService.agentIdentityMantle;
+      case 'base':
+        return this.configService.agentIdentityBase;
+      case 'robinhood':
+        return this.configService.agentIdentityRHC;
+      default:
+        return '';
+    }
   }
 
   getAddress(): string {
@@ -85,7 +133,97 @@ export class WalletService {
     if (!this.wallet) {
       throw new Error('Wallet not initialized');
     }
-    // Simplified - would need proper EIP-712 signing
     return this.wallet.signMessage(JSON.stringify(message));
+  }
+
+  /**
+   * Get the current on-chain decision count from AgentIdentity
+   */
+  async getOnChainDecisionCount(chain: string): Promise<number> {
+    try {
+      const contract = this.contracts.get(`agentIdentity_${chain}`);
+      if (!contract) {
+        throw new Error(`AgentIdentity not configured on ${chain}`);
+      }
+      return await contract.totalDecisions();
+    } catch (error) {
+      this.logger.error(`Failed to get decision count on ${chain}: ${error}`);
+      return 0;
+    }
+  }
+
+  /**
+   * Record a decision on-chain via the AgentIdentity contract
+   * This is the primary method for committing AI decisions to the blockchain
+   */
+  async recordDecisionOnChain(
+    chain: string,
+    params: RecordDecisionParams,
+  ): Promise<RecordDecisionResult> {
+    if (!this.wallet) {
+      throw new Error('Wallet not initialized');
+    }
+
+    const contract = this.contracts.get(`agentIdentity_${chain}`);
+    if (!contract) {
+      throw new Error(`AgentIdentity not configured on ${chain}`);
+    }
+
+    // Get current decision count before the new decision
+    const decisionCountBefore = await contract.totalDecisions();
+
+    this.logger.log(
+      `Recording decision on ${chain}: type=${params.decisionType}, subject=${params.subjectId}, confidence=${params.confidence}`
+    );
+
+    try {
+      // Call recordDecision on the AgentIdentity contract
+      const tx = await (contract as Contract).recordDecision(
+        params.decisionType,
+        params.subjectId,
+        params.inputHash,
+        params.outputHash,
+        params.confidence,
+        params.reasoningIpfsHash,
+      );
+
+      const receipt = await tx.wait();
+      const blockNumber = receipt.blockNumber;
+      const txHash = receipt.hash;
+
+      // The decision index is the count before (since new decisions are appended at the end)
+      const decisionIndex = Number(decisionCountBefore);
+
+      this.logger.log(
+        `Decision recorded on ${chain}: tx=${txHash}, block=${blockNumber}, index=${decisionIndex}`
+      );
+
+      return {
+        txHash,
+        blockNumber,
+        decisionIndex,
+      };
+    } catch (error) {
+      this.logger.error(`Failed to record decision on ${chain}: ${error}`);
+      throw error;
+    }
+  }
+
+  /**
+   * Hash input data for on-chain recording
+   * Uses keccak256 matching the AgentIdentity contract
+   */
+  hashInputForChain(data: string): string {
+    // Convert string to bytes32 using keccak256
+    const encoded = ethers.keccak256(ethers.toUtf8Bytes(data));
+    return encoded;
+  }
+
+  /**
+   * Hash output data for on-chain recording
+   */
+  hashOutputForChain(outputJson: string): string {
+    const encoded = ethers.keccak256(ethers.toUtf8Bytes(outputJson));
+    return encoded;
   }
 }

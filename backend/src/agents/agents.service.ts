@@ -2,17 +2,9 @@ import { Injectable, Logger } from '@nestjs/common';
 import { ToolsService, ToolResult } from '../tools/tools.service';
 import { WalletService } from '../blockchain/wallet.service';
 import { IpfsTools } from '../tools/ipfs.tools';
+import { DecisionType } from '../blockchain/abi/AgentIdentity';
 
-export enum DecisionType {
-  IDEA_APPROVE = 0,
-  IDEA_REJECT = 1,
-  IDEA_RANK = 2,
-  BUILDER_RANK = 3,
-  MVP_VALIDATE = 4,
-  MILESTONE_VALIDATE = 5,
-  DAO_VOTE = 6,
-  REVENUE_ADVICE = 7,
-}
+export { DecisionType } from '../blockchain/abi/AgentIdentity';
 
 export interface AgentDecision {
   id: string;
@@ -27,6 +19,11 @@ export interface AgentDecision {
   toolResults: ToolResult[];
   timestamp: Date;
   executed: boolean;
+  // On-chain tracking
+  chain?: string;
+  onChainTxHash?: string;
+  onChainBlockNumber?: number;
+  onChainIndex?: number;
 }
 
 export interface AgentConfig {
@@ -47,13 +44,13 @@ export class AgentsService {
   ) {}
 
   /**
-   * Record a decision on-chain via the AI agent wallet
+   * Record a decision both locally and on-chain via AgentIdentity contract
    */
   async recordDecision(
     chain: string,
     agentIdentityAddress: string,
-    decision: Omit<AgentDecision, 'id' | 'reasoningIpfsHash'>,
-  ): Promise<{ txHash: string; decisionId: string }> {
+    decision: Omit<AgentDecision, 'id' | 'reasoningIpfsHash' | 'onChainTxHash' | 'onChainBlockNumber' | 'onChainIndex'>,
+  ): Promise<{ txHash: string; decisionId: string; onChainIndex: number }> {
     // Pin reasoning to IPFS first
     const pinResult = await this.ipfsTools.pinReasoning(decision.reasoning, {
       agentType: decision.agentType,
@@ -68,19 +65,91 @@ export class AgentsService {
 
     const decisionId = `decision_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
 
-    // Store locally for now (would call on-chain in production)
+    // Hash input and output data for on-chain storage
+    const inputData = JSON.stringify({
+      agentType: decision.agentType,
+      decisionType: decision.decisionType,
+      subjectId: decision.subjectId,
+      timestamp: decision.timestamp.toISOString(),
+    });
+    const inputHash = this.walletService.hashInputForChain(inputData);
+    const outputJson = JSON.stringify({
+      confidence: decision.confidence,
+      reasoning: decision.reasoning,
+      toolResults: decision.toolResults,
+    });
+    const outputHash = this.walletService.hashOutputForChain(outputJson);
+
+    let onChainResult = {
+      txHash: '',
+      blockNumber: 0,
+      decisionIndex: -1,
+    };
+
+    // Try to record on-chain if wallet is configured
+    try {
+      onChainResult = await this.walletService.recordDecisionOnChain(chain, {
+        decisionType: decision.decisionType,
+        subjectId: parseInt(decision.subjectId, 10),
+        inputHash,
+        outputHash,
+        confidence: decision.confidence,
+        reasoningIpfsHash: pinResult.ipfsHash,
+      });
+      this.logger.log(`Decision recorded on-chain on ${chain}: ${onChainResult.txHash}`);
+    } catch (error) {
+      this.logger.warn(`Failed to record decision on-chain (will store locally): ${error}`);
+      // Fall back to local storage only
+      onChainResult.txHash = `local_${Date.now()}`;
+    }
+
+    // Store locally with on-chain info
+    this.decisions.push({
+      ...decision,
+      id: decisionId,
+      reasoningIpfsHash: pinResult.ipfsHash,
+      chain,
+      onChainTxHash: onChainResult.txHash,
+      onChainBlockNumber: onChainResult.blockNumber,
+      onChainIndex: onChainResult.decisionIndex,
+    });
+
+    this.logger.log(`Decision recorded: ${decisionId} on ${chain}`);
+
+    return {
+      txHash: onChainResult.txHash,
+      decisionId,
+      onChainIndex: onChainResult.decisionIndex,
+    };
+  }
+
+  /**
+   * Record decision locally only (no on-chain transaction)
+   * Use this when on-chain recording fails or is not needed
+   */
+  async recordDecisionLocalOnly(
+    decision: Omit<AgentDecision, 'id' | 'reasoningIpfsHash' | 'chain' | 'onChainTxHash' | 'onChainBlockNumber' | 'onChainIndex'>,
+  ): Promise<{ decisionId: string }> {
+    const pinResult = await this.ipfsTools.pinReasoning(decision.reasoning, {
+      agentType: decision.agentType,
+      decisionType: decision.decisionType,
+      subjectId: decision.subjectId,
+      confidence: decision.confidence,
+    });
+
+    if (!pinResult.success || !pinResult.ipfsHash) {
+      throw new Error('Failed to pin reasoning to IPFS');
+    }
+
+    const decisionId = `decision_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+
     this.decisions.push({
       ...decision,
       id: decisionId,
       reasoningIpfsHash: pinResult.ipfsHash,
     });
 
-    this.logger.log(`Decision recorded: ${decisionId} on ${chain}`);
-
-    return {
-      txHash: `0x${Math.random().toString(16).substr(2, 64)}`, // Mock tx hash
-      decisionId,
-    };
+    return { decisionId };
   }
 
   /**
@@ -129,6 +198,7 @@ export class AgentsService {
     byType: Record<DecisionType, number>;
     averageConfidence: number;
     executedCount: number;
+    onChainCount: number;
   } {
     const byType: Record<DecisionType, number> = {
       [DecisionType.IDEA_APPROVE]: 0,
@@ -156,6 +226,32 @@ export class AgentsService {
       byType,
       averageConfidence: avgConfidence,
       executedCount: this.decisions.filter((d) => d.executed).length,
+      onChainCount: this.decisions.filter((d) => d.onChainTxHash && !d.onChainTxHash.startsWith('local_')).length,
+    };
+  }
+
+  /**
+   * Sync local decisions with on-chain state
+   * Useful for verifying that decisions were recorded correctly
+   */
+  async syncWithOnChain(chain: string): Promise<{
+    localCount: number;
+    onChainCount: number;
+    synced: boolean;
+  }> {
+    const localCount = this.decisions.filter((d) => d.chain === chain).length;
+    let onChainCount = 0;
+
+    try {
+      onChainCount = await this.walletService.getOnChainDecisionCount(chain);
+    } catch (error) {
+      this.logger.error(`Failed to get on-chain count for ${chain}: ${error}`);
+    }
+
+    return {
+      localCount,
+      onChainCount,
+      synced: localCount === onChainCount,
     };
   }
 }
