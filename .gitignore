@@ -3,3 +3,6 @@ cache/*.json
 out/
 .env
 node_modules/
+backend/dist/
+backend/node_modules/
+backend/package-lock.json
