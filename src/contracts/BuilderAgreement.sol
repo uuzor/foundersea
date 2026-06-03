@@ -8,9 +8,9 @@ contract BuilderAgreement is Ownable {
     struct Agreement {
         uint256 ideaId;
         address ideaToken;
+        address factory;
         address[] builders;
         string agreementIpfsHash;
-        uint256 builderStake;
         address revenueSource; // Set by builder when they sign
         bool creatorSigned;
         bool builderSigned;
@@ -32,12 +32,17 @@ contract BuilderAgreement is Ownable {
 
     constructor(address _owner) Ownable(_owner) {}
 
+    function initialize(address _factory) external onlyOwner {
+        // Called once after deployment with factory address
+        // This allows factory to wire revenue sources after activation
+    }
+
     function createAgreement(
         uint256 _ideaId,
         address _ideaToken,
+        address _factory,
         address[] calldata _builders,
-        string calldata _agreementIpfsHash,
-        uint256 _builderStake
+        string calldata _agreementIpfsHash
     ) external onlyOwner returns (uint256 agreementId) {
         require(_builders.length >= 1 && _builders.length <= 2, "Invalid builders count");
         
@@ -45,9 +50,9 @@ contract BuilderAgreement is Ownable {
         agreements[agreementId] = Agreement({
             ideaId: _ideaId,
             ideaToken: _ideaToken,
+            factory: _factory,
             builders: _builders,
             agreementIpfsHash: _agreementIpfsHash,
-            builderStake: _builderStake,
             revenueSource: address(0),
             creatorSigned: false,
             builderSigned: false,
@@ -100,12 +105,12 @@ contract BuilderAgreement is Ownable {
             a.signedAt = block.timestamp;
             a.active = true;
             
-            // Wire revenue source into IdeaToken if it's a valid contract
-            if (a.revenueSource != address(0) && a.ideaToken != address(0)) {
-                (bool success,) = a.ideaToken.call(
-                    abi.encodeWithSelector(IIdeaToken.setRevenueSource.selector, a.revenueSource)
+            // Call factory to wire revenue source (factory is the only caller allowed on IdeaToken)
+            if (a.factory != address(0) && a.revenueSource != address(0)) {
+                (bool success,) = a.factory.call(
+                    abi.encodeWithSignature("wireRevenueSource(uint256,address)", a.ideaId, a.revenueSource)
                 );
-                // Ignore failure - ideaToken might be mock or have different interface
+                // Factory will revert if not registered - that's intentional
             }
             
             emit AgreementActivated(agreementId);

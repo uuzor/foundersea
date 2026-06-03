@@ -105,8 +105,6 @@ contract FundingPool is Ownable {
     function deposit(uint256 amount) external {
         require(!fundingClosed, "Funding closed");
         require(raisedAmount + amount <= hardCap, "Exceeds hard cap");
-        
-        IFundingGate(gate).canFund(msg.sender);
         require(IFundingGate(gate).canFund(msg.sender), "Gate check failed");
 
         fundingToken.safeTransferFrom(msg.sender, address(this), amount);
@@ -235,10 +233,13 @@ contract FundingPool is Ownable {
         emit MilestoneReleased(index, m.amount);
     }
 
-    // DAO can slash builder stake on repeated failures
-    function slashBuilder(uint256 amount) external {
+    // DAO can slash competitor payout if they abandon
+    function slashCompetitorPayout(uint256 slot) external {
         require(msg.sender == dao, "Only DAO");
-        // Implementation depends on builder stake mechanism
+        require(slot < 3, "Invalid slot");
+        require(!competitorPayouts[slot].released, "Already released");
+        // Mark as slashed - amount will be redistributed or returned to pool
+        competitorPayouts[slot].amount = 0;
     }
 
     function setMilestoneValidated(
