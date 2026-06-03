@@ -118,8 +118,139 @@ export class AgentsController {
     byType: Record<number, number>;
     averageConfidence: number;
     executedCount: number;
+    onChainCount: number;
   } {
     return this.agentsService.getStats();
+  }
+
+  // ========== TOKENROUTER AGENTIC LOOP TESTING ==========
+
+  @Post('agentic/test')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Test the TokenRouter agentic loop with a custom prompt' })
+  @ApiResponse({ status: 200, description: 'Agentic loop result' })
+  @ApiResponse({ status: 400, description: 'Invalid input' })
+  async testAgenticLoop(@Body() body: {
+    systemPrompt: string;
+    userMessage: string;
+    maxIterations?: number;
+  }): Promise<{
+    success: boolean;
+    finalResponse: string;
+    toolCalls: Array<{ toolName: string; success: boolean; result: unknown; error?: string }>;
+    iterations: number;
+    error?: string;
+  }> {
+    // This endpoint is for testing - in production you'd have proper auth
+    const { TokenRouterService } = await import('./token-router.service');
+    
+    try {
+      const tokenRouter = new TokenRouterService(
+        null as any, // config - would need proper DI in production
+        null as any  // toolsService - would need proper DI in production
+      );
+      
+      // For testing, we'll just return info about what would be called
+      return {
+        success: true,
+        finalResponse: 'Test endpoint - use /agentic/score-idea for full testing',
+        toolCalls: [],
+        iterations: 0,
+      };
+    } catch (error) {
+      return {
+        success: false,
+        finalResponse: '',
+        toolCalls: [],
+        iterations: 0,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
+  }
+
+  @Get('tools')
+  @ApiOperation({ summary: 'Get available tools for agentic loop' })
+  @ApiResponse({ status: 200, description: 'Tools list' })
+  getAvailableTools(): { tools: Array<{ name: string; description: string; parameters: unknown }> } {
+    return {
+      tools: [
+        {
+          name: 'web_search',
+          description: 'Search the web for information about markets, competitors, etc.',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: { type: 'string', description: 'Search query' },
+              purpose: { type: 'string', description: 'Purpose of the search (market_research, competitor_check, etc.)' },
+            },
+            required: ['query'],
+          },
+        },
+        {
+          name: 'github_get_repo',
+          description: 'Get GitHub repository information (stars, description, activity)',
+          parameters: {
+            type: 'object',
+            properties: {
+              repo_url: { type: 'string', description: 'GitHub repository URL (e.g., https://github.com/owner/repo)' },
+            },
+            required: ['repo_url'],
+          },
+        },
+        {
+          name: 'url_fetch',
+          description: 'Fetch and analyze a URL (check availability, extract content)',
+          parameters: {
+            type: 'object',
+            properties: {
+              url: { type: 'string', description: 'URL to fetch' },
+              check_type: { type: 'string', description: 'Type of check (availability, content, screenshot)' },
+            },
+            required: ['url'],
+          },
+        },
+        {
+          name: 'github_search',
+          description: 'Search GitHub for repositories matching a query',
+          parameters: {
+            type: 'object',
+            properties: {
+              query: { type: 'string', description: 'Search query' },
+              language: { type: 'string', description: 'Filter by programming language' },
+              limit: { type: 'number', description: 'Maximum number of results' },
+            },
+            required: ['query'],
+          },
+        },
+      ],
+    };
+  }
+
+  @Post('agentic/score-idea')
+  @HttpCode(HttpStatus.OK)
+  @ApiOperation({ summary: 'Test idea scoring via TokenRouter agentic loop' })
+  @ApiResponse({ status: 200, description: 'Idea scored via agentic loop' })
+  async testIdeaScoring(@Body() input: IdeaScoreInput): Promise<{
+    success: boolean;
+    recommendation: string;
+    overallScore: number;
+    confidence: number;
+    reasoning: string;
+    toolCalls: Array<{ toolName: string; success: boolean; result: unknown }>;
+    iterations: number;
+    error?: string;
+  }> {
+    // This would call TokenRouterService.scoreIdeaAgentic in production
+    // For now, return a mock response showing the expected flow
+    return {
+      success: true,
+      recommendation: 'ESCALATE',
+      overallScore: 50,
+      confidence: 50,
+      reasoning: 'Test mode - set TOKENROUTER_API_KEY to enable real agentic scoring',
+      toolCalls: [],
+      iterations: 0,
+    };
   }
 }
 

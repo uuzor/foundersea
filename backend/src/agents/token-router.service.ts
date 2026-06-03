@@ -1,6 +1,7 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
 import axios, { AxiosInstance } from 'axios';
+import { ToolsService } from '../tools/tools.service';
 
 export interface TokenRouterMessage {
   role: 'system' | 'user' | 'assistant';
@@ -66,7 +67,10 @@ export class TokenRouterService {
   private readonly httpClient: AxiosInstance;
   private readonly baseUrl: string;
 
-  constructor(private readonly configService: ConfigService) {
+  constructor(
+    private readonly configService: ConfigService,
+    private readonly toolsService: ToolsService,
+  ) {
     this.baseUrl = this.configService.tokenRouterBaseUrl;
     this.httpClient = axios.create({
       baseURL: this.baseUrl,
@@ -198,22 +202,38 @@ export class TokenRouterService {
   }
 
   /**
-   * Execute a tool by name
-   * This should be wired to your ToolsService
+   * Execute a tool by name via ToolsService
    */
   private async executeTool(toolName: string, args: Record<string, unknown>): Promise<{
     success: boolean;
     data?: unknown;
     error?: string;
   }> {
-    // Tool execution would be wired to ToolsService
-    // For now, return a placeholder response
-    this.logger.log(`Executing tool: ${toolName}`);
-    
-    return {
-      success: true,
-      data: { message: `Tool ${toolName} executed with args: ${JSON.stringify(args)}` },
-    };
+    try {
+      // Map TokenRouter tool names to ToolsService tool names
+      const toolNameMapping: Record<string, string> = {
+        'web_search': 'web_search',
+        'github_get_repo': 'github_get_repo',
+        'url_fetch': 'url_fetch',
+      };
+
+      const serviceToolName = toolNameMapping[toolName] || toolName;
+      
+      this.logger.log(`Executing tool via ToolsService: ${serviceToolName}`);
+      const result = await this.toolsService.executeTool(serviceToolName, args);
+      
+      return {
+        success: result.success,
+        data: result.data,
+        error: result.error,
+      };
+    } catch (error) {
+      this.logger.error(`Tool execution failed: ${error}`);
+      return {
+        success: false,
+        error: error instanceof Error ? error.message : 'Unknown error',
+      };
+    }
   }
 
   /**
