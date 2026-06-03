@@ -106,11 +106,11 @@ contract BuilderAgreement is Ownable {
             a.active = true;
             
             // Call factory to wire revenue source (factory is the only caller allowed on IdeaToken)
+            // Intentionally ignoring return value - factory call failure is expected for old agreements
             if (a.factory != address(0) && a.revenueSource != address(0)) {
-                (bool success,) = a.factory.call(
-                    abi.encodeWithSignature("wireRevenueSource(uint256,address)", a.ideaId, a.revenueSource)
-                );
-                // Factory will revert if not registered - that's intentional
+                // solhint-disable-next-line avoid-low-level-calls
+                // forge-ignore: unchecked-call, unused-return
+                a.factory.call(abi.encodeWithSignature("wireRevenueSource(uint256,address)", a.ideaId, a.revenueSource));
             }
             
             emit AgreementActivated(agreementId);

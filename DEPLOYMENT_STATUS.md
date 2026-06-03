@@ -1,70 +1,109 @@
-# FounderSea Protocol - Mantle Sepolia Deployment
+# FounderSea Protocol - Deployment Status
 
-## Deployment Status (as of 2026-06-02)
+## Deployment Status (as of 2026-06-03)
 
 ### ✅ Completed
-- Foundry project initialized with Mantle Sepolia configuration
+- Foundry project initialized with all chain configurations
 - All 8 smart contracts written, compiled successfully
-- All 20 tests passing
+- All 31 tests passing
+- Deployment scripts ready
 
 ### ⚠️ Pending - Requires Testnet Tokens
 
-The deployment scripts are ready but require MNT (Mantle Sepolia test tokens) to broadcast transactions.
+The deployment scripts are ready but require test tokens to broadcast transactions.
 
-**Estimated deployment cost**: ~0.5 MNT for all contracts
+**Estimated deployment cost**: ~0.5 MNT/USDC per chain for all contracts
 
-**To get test tokens:**
-1. Visit https://faucet.mantle.xyz
-2. Request MNT tokens for address: `0xf39Fd6e51aad88F6F4ce6aB8827279cffFb92266`
+---
 
-### Deployment Commands
+## Deployment Commands
 
-Once you have test tokens, run:
-
+### Deploy to Mantle Sepolia
 ```bash
-# Deploy AgentIdentity
-forge script script/DeployAgentIdentity.s.sol:DeployAgentIdentity --rpc-url $MANTLE_SEPOLIA_RPC --broadcast --private-key $PRIVATE_KEY
+# 1. Copy and fill in your .env
+cp .env.example .env
+# Edit .env with your PRIVATE_KEY and FOUNDERSEA_TREASURY
 
-# Deploy RevenueDistributor
-forge script script/DeployRevenueDistributor.s.sol:DeployRevenueDistributor --rpc-url $MANTLE_SEPOLIA_RPC --broadcast --private-key $PRIVATE_KEY
+# 2. Load env vars
+source .env
 
-# Deploy all remaining contracts
-forge script script/Deploy.s.sol:DeployMainnet --rpc-url $MANTLE_SEPOLIA_RPC --broadcast --private-key $PRIVATE_KEY
+# 3. Deploy
+forge script script/Deploy.s.sol:Deploy \
+  --rpc-url mantleSepolia \
+  --broadcast \
+  --verify \
+  --ledger
 ```
 
-### Expected Contract Addresses (Dry Run - Not Yet Deployed)
-
-| Contract | Address |
-|----------|---------|
-| AgentIdentity | `0x52C7a9DDC1fE319a98Bd193b758Eaa4735738dDB` |
-| IdeaFactory | `0x88197a5f983300d2a96a6D554248266f7144A6Ae` |
-| RevenueDistributor | `0xB5AFb7CD0FaDDD27785dFb9bC02Cc5E4C3D4378e` |
-| DAOVoting | `0xf44a9741E029783CEF812bAEd86b4f02B8391a2F` |
-| IdeaMarketplace | `0xB7c61e6987144bC0E692E6Bde2B845B9e29D4cD9` |
-
-## Environment Setup
-
-Create `.env` file:
+### Deploy to Base Sepolia
+```bash
+forge script script/Deploy.s.sol:Deploy \
+  --rpc-url baseSepolia \
+  --broadcast \
+  --verify
 ```
-PRIVATE_KEY=<your_private_key>
-FOUNDERSEA_TREASURY=<your_treasury_address>
-MANTLE_SEPOLIA_RPC=https://rpc.sepolia.mantle.xyz
+
+### Deploy to Robinhood Chain Testnet
+```bash
+forge script script/Deploy.s.sol:Deploy \
+  --rpc-url rhcTestnet \
+  --broadcast
 ```
+
+---
 
 ## Network Configuration
 
-- **Network**: Mantle Sepolia Testnet
+### Mantle Sepolia
 - **Chain ID**: 5003
 - **RPC**: https://rpc.sepolia.mantle.xyz
+- **USDY**: Update with actual address after deployment
+
+### Base Sepolia
+- **Chain ID**: 84532
+- **RPC**: https://sepolia.base.org
+- **USDY**: Update with actual address after deployment
+
+### Robinhood Chain Testnet
+- **Chain ID**: 1300
+- **RPC**: https://testnet.rpc.robinhood.com
+- **Native Token**: RHC
+
+---
 
 ## Contracts Overview
 
-1. **AgentIdentity** (ERC-8004) - AI agent registry with decision tracking
-2. **IdeaFactory** - Creates idea tokens and funding pools
-3. **IdeaToken** - ERC-20 tokens for each idea
-4. **FundingPool** - Manages funding with milestone releases
-5. **FundingGate** - Access control for funding (Whitelist/MinHold/DAO)
-6. **BuilderAgreement** - Three-party agreements between creator/builder/DAO
-7. **DAOVoting** - On-chain governance with AI delegation
-8. **IdeaMarketplace** - Secondary trading for idea tokens
-9. **RevenueDistributor** - Proportional revenue distribution to token holders
+| Contract | Purpose |
+|----------|---------|
+| AgentIdentity (ERC-8004) | AI agent registry with decision tracking |
+| IdeaFactory | Creates idea tokens, funding pools, and funding gates |
+| IdeaToken | ERC-20 tokens for each idea with revenue accounting |
+| FundingPool | Manages funding with milestone releases and competitor payouts |
+| FundingGate | Access control for funding (OPEN/WHITELIST/MIN_HOLD/DAO_CURATED) |
+| BuilderAgreement | Three-party agreements between creator/builder/DAO |
+| DAOVoting | On-chain governance with AI voting delegation |
+| IdeaMarketplace | Secondary trading for idea tokens with EIP-712 |
+
+---
+
+## Post-Deployment Steps
+
+1. **Update .env** with deployed contract addresses
+2. **Update IdeaFactory** with correct USDY addresses
+3. **Verify contracts** on block explorers
+4. **Update frontend** with contract addresses
+5. **Test contract interactions** before going live
+6. **Set AI agent address** in all contracts when backend is ready
+
+---
+
+## Getting Test Tokens
+
+### Mantle Sepolia
+Visit https://faucet.mantle.xyz
+
+### Base Sepolia
+Visit https://www.coinbase.com/faucets
+
+### Robinhood Chain
+Visit the RHC faucet (check PLANV2.md for link)

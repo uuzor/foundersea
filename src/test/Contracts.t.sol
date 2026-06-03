@@ -45,7 +45,7 @@ contract IdeaTokenTest is Test {
         ideaToken = new IdeaToken("FounderSea Idea 1", "FSID-1", fundingPool, creator, 2000, factory, address(usdy));
     }
 
-    function testTokenMetadata() public {
+    function testTokenMetadata() public view {
         assertEq(ideaToken.name(), "FounderSea Idea 1");
         assertEq(ideaToken.symbol(), "FSID-1");
         assertEq(ideaToken.fundingPool(), fundingPool);
@@ -96,7 +96,7 @@ contract FundingGateTest is Test {
         fundingGate = new FundingGate(creator, dao);
     }
 
-    function testDefaultOpenGate() public {
+    function testDefaultOpenGate() public view {
         assertTrue(fundingGate.canFund(address(0x789)));
     }
 
@@ -111,7 +111,7 @@ contract FundingGateTest is Test {
         // Note: need to call with correct params
     }
 
-    function testMinHoldGate() public {
+    function testMinHoldGate() public view {
         // Test with OPEN gate - simpler test
         assertTrue(fundingGate.canFund(address(0x789)));
     }
@@ -288,7 +288,7 @@ contract IdeaMarketplaceTest is Test {
         marketplace = new IdeaMarketplace(owner, owner, address(usdy));
     }
 
-    function testCreateListing() public {
+    function testCreateListing() public view {
         // Note: Would need to set up IdeaToken mock
         // This is a simplified test
         assertEq(marketplace.treasury(), owner);
@@ -298,3 +298,299 @@ contract IdeaMarketplaceTest is Test {
 
 // Note: IdeaToken.claimRevenue() test moved to IdeaTokenTest
 // RevenueDistributor removed - revenue handling moved to IdeaToken directly
+
+contract FundingPoolTest is Test {
+    FundingPool public fundingPool;
+    MockERC20 public fundingToken;
+    FundingGate public fundingGate;
+    IdeaToken public ideaToken;
+    
+    address public owner;
+    address public aiAgent;
+    address public dao;
+    address public factory;
+    
+    function setUp() public {
+        owner = address(this);  // Test contract is owner
+        aiAgent = address(0x456);
+        dao = address(0x789);
+        factory = address(0xAAA);
+        
+        fundingToken = new MockERC20("USDY", "USDY", 6);
+        fundingGate = new FundingGate(owner, address(0));
+        
+        fundingPool = new FundingPool(
+            address(fundingToken),
+            address(fundingGate),
+            owner,
+            1000e6,    // softCap: 1000 USDY
+            5000e6,    // hardCap: 5000 USDY
+            1000,      // 10% competition prize
+            factory
+        );
+        
+        // Deploy IdeaToken
+        ideaToken = new IdeaToken(
+            "FounderSea Idea 1",
+            "FSID-1",
+            address(fundingPool),
+            owner,
+            2000,      // 20% builder alloc
+            factory,
+            address(fundingToken)
+        );
+        
+        // Wire fundingPool to ideaToken (test contract is owner)
+        fundingPool.setIdeaToken(address(ideaToken));
+        fundingPool.setAiAgent(aiAgent);
+        fundingPool.setDao(dao);
+    }
+
+    function testInitialState() public view {
+        assertEq(fundingPool.softCap(), 1000e6);
+        assertEq(fundingPool.hardCap(), 5000e6);
+        assertEq(fundingPool.competitionPrizeBps(), 1000);
+        assertFalse(fundingPool.fundingClosed());
+        assertFalse(fundingPool.builderAssigned());
+        assertFalse(fundingPool.competitorsSet());
+    }
+
+    function testDepositAndTokenMint() public {
+        // Mint tokens to investor and approve
+        fundingToken.mint(address(this), 1000e6);
+        fundingToken.approve(address(fundingPool), type(uint256).max);
+        
+        // Deposit
+        fundingPool.deposit(1000e6);
+        
+        assertEq(fundingPool.raisedAmount(), 1000e6);
+        // Due to bonding curve, tokens minted is less than 1:1
+        // Price = basePrice * (hardCap + raisedAmount) / hardCap = 1e6 * 6/5 = 1.2e6
+        // Tokens = 1000e6 * 1e6 / 1.2e6 = 833.33...e18
+        assertEq(ideaToken.balanceOf(address(this)), 833333333);
+    }
+
+    function testCannotDepositExceedingHardCap() public {
+        fundingToken.mint(address(this), 6000e6);
+        fundingToken.approve(address(fundingPool), type(uint256).max);
+        
+        fundingPool.deposit(5000e6);
+        
+        vm.expectRevert("Exceeds hard cap");
+        fundingPool.deposit(1e6);
+    }
+
+    function testCloseFundingSoftCapMet() public {
+        fundingToken.mint(address(this), 1000e6);
+        fundingToken.approve(address(fundingPool), type(uint256).max);
+        fundingPool.deposit(1000e6);
+        
+        vm.prank(owner);
+        fundingPool.closeFunding();
+        
+        assertTrue(fundingPool.fundingClosed());
+        assertTrue(fundingPool.checkSoftCapMet());
+    }
+
+    function testCloseFundingSoftCapNotMet() public {
+        fundingToken.mint(address(this), 500e6);
+        fundingToken.approve(address(fundingPool), type(uint256).max);
+        fundingPool.deposit(500e6);
+        
+        vm.prank(owner);
+        fundingPool.closeFunding();
+        
+        assertTrue(fundingPool.fundingClosed());
+        assertFalse(fundingPool.checkSoftCapMet());
+    }
+
+    function testSetCompetitorPayouts() public {
+        fundingToken.mint(address(this), 1000e6);
+        fundingToken.approve(address(fundingPool), type(uint256).max);
+        fundingPool.deposit(1000e6);
+        
+        vm.prank(owner);
+        fundingPool.closeFunding();
+        
+        address[3] memory builders;
+        builders[0] = address(0xB1);
+        builders[1] = address(0xB2);
+        builders[2] = address(0xB3);
+        
+        uint256[3] memory amounts;
+        amounts[0] = 40e6;  // 40 USDY
+        amounts[1] = 35e6;  // 35 USDY
+        amounts[2] = 25e6;  // 25 USDY
+        
+        vm.prank(owner);
+        fundingPool.setCompetitorPayouts(builders, amounts);
+        
+        assertTrue(fundingPool.competitorsSet());
+        
+        // Verify payouts
+        (address builder1, uint256 amount1, bool released1,,) = fundingPool.competitorPayouts(0);
+        assertEq(builder1, address(0xB1));
+        assertEq(amount1, 40e6);
+        assertFalse(released1);
+    }
+
+    function testCannotSetCompetitorsBeforeFundingClosed() public {
+        address[3] memory builders;
+        builders[0] = address(0xB1);
+        builders[1] = address(0xB2);
+        builders[2] = address(0xB3);
+        
+        uint256[3] memory amounts;
+        amounts[0] = 40e6;
+        amounts[1] = 35e6;
+        amounts[2] = 25e6;
+        
+        vm.prank(owner);
+        vm.expectRevert("Funding not closed");
+        fundingPool.setCompetitorPayouts(builders, amounts);
+    }
+
+    function testValidateCompetitor() public {
+        fundingToken.mint(address(this), 1000e6);
+        fundingToken.approve(address(fundingPool), type(uint256).max);
+        fundingPool.deposit(1000e6);
+        
+        vm.prank(owner);
+        fundingPool.closeFunding();
+        
+        address[3] memory builders;
+        builders[0] = address(0xB1);
+        builders[1] = address(0xB2);
+        builders[2] = address(0xB3);
+        
+        uint256[3] memory amounts;
+        amounts[0] = 40e6;
+        amounts[1] = 35e6;
+        amounts[2] = 25e6;
+        
+        vm.prank(owner);
+        fundingPool.setCompetitorPayouts(builders, amounts);
+        
+        // AI validates competitor
+        vm.prank(aiAgent);
+        fundingPool.validateCompetitor(0, 75, "ipfs://competitor1_validation");
+        
+        (,,, uint256 aiConfidence, string memory ipfsHash) = fundingPool.competitorPayouts(0);
+        assertEq(aiConfidence, 75);
+        assertEq(ipfsHash, "ipfs://competitor1_validation");
+    }
+
+    function testReleaseCompetitorPayout() public {
+        fundingToken.mint(address(this), 1000e6);
+        fundingToken.approve(address(fundingPool), type(uint256).max);
+        fundingPool.deposit(1000e6);
+        
+        // Transfer tokens to fundingPool to cover payout
+        fundingToken.mint(address(fundingPool), 100e6);
+        
+        vm.prank(owner);
+        fundingPool.closeFunding();
+        
+        address[3] memory builders;
+        builders[0] = address(0xB1);
+        builders[1] = address(0xB2);
+        builders[2] = address(0xB3);
+        
+        uint256[3] memory amounts;
+        amounts[0] = 40e6;
+        amounts[1] = 35e6;
+        amounts[2] = 25e6;
+        
+        vm.prank(owner);
+        fundingPool.setCompetitorPayouts(builders, amounts);
+        
+        // AI validates with high confidence
+        vm.prank(aiAgent);
+        fundingPool.validateCompetitor(0, 75, "ipfs://validation");
+        
+        // AI releases payout
+        vm.prank(aiAgent);
+        fundingPool.releaseCompetitorPayout(0);
+        
+        (,, bool released,,) = fundingPool.competitorPayouts(0);
+        assertTrue(released);
+    }
+
+    function testAssignBuilderAndMilestones() public {
+        fundingToken.mint(address(this), 1000e6);
+        fundingToken.approve(address(fundingPool), type(uint256).max);
+        fundingPool.deposit(1000e6);
+        
+        vm.prank(owner);
+        fundingPool.closeFunding();
+        
+        address builder = address(0xBBBB1);
+        
+        uint256[] memory amounts = new uint256[](2);
+        amounts[0] = 500e6;
+        amounts[1] = 500e6;
+        
+        uint256[] memory deadlines = new uint256[](2);
+        deadlines[0] = block.timestamp + 30 days;
+        deadlines[1] = block.timestamp + 60 days;
+        
+        vm.prank(owner);
+        fundingPool.assignBuilder(builder, amounts, deadlines);
+        
+        assertTrue(fundingPool.builderAssigned());
+        assertEq(fundingPool.getMilestoneCount(), 2);
+    }
+
+    function testSetMilestoneValidated() public {
+        fundingToken.mint(address(this), 1000e6);
+        fundingToken.approve(address(fundingPool), type(uint256).max);
+        fundingPool.deposit(1000e6);
+        
+        vm.prank(owner);
+        fundingPool.closeFunding();
+        
+        address builder = address(0xBBBB2);
+        
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 500e6;
+        
+        uint256[] memory deadlines = new uint256[](1);
+        deadlines[0] = block.timestamp + 30 days;
+        
+        vm.prank(owner);
+        fundingPool.assignBuilder(builder, amounts, deadlines);
+        
+        // AI validates milestone
+        vm.prank(aiAgent);
+        fundingPool.setMilestoneValidated(0, 80, "ipfs://milestone_validation");
+    }
+
+    function testCannotReleaseMilestoneBelowThreshold() public {
+        fundingToken.mint(address(this), 1000e6);
+        fundingToken.approve(address(fundingPool), type(uint256).max);
+        fundingPool.deposit(1000e6);
+        
+        vm.prank(owner);
+        fundingPool.closeFunding();
+        
+        address builder = address(0xBBBB3);
+        
+        uint256[] memory amounts = new uint256[](1);
+        amounts[0] = 500e6;
+        
+        uint256[] memory deadlines = new uint256[](1);
+        deadlines[0] = block.timestamp + 30 days;
+        
+        vm.prank(owner);
+        fundingPool.assignBuilder(builder, amounts, deadlines);
+        
+        // AI validates with low confidence
+        vm.prank(aiAgent);
+        fundingPool.setMilestoneValidated(0, 60, "ipfs://low_confidence");
+        
+        // Try to release - should fail
+        vm.prank(aiAgent);
+        vm.expectRevert("Validation not passed");
+        fundingPool.releaseMilestone(0);
+    }
+}

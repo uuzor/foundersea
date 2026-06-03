@@ -1,0 +1,31 @@
+import { ConfigService as NestConfigService } from '@nestjs/config';
+export declare class ConfigService {
+    private configService;
+    constructor(configService: NestConfigService);
+    get tokenRouterApiKey(): string;
+    get tokenRouterBaseUrl(): string;
+    get githubToken(): string;
+    get serperApiKey(): string;
+    get pinataApiKey(): string;
+    get pinataSecret(): string;
+    get robinhoodChainRpc(): string;
+    get mantleSepoliaRpc(): string;
+    get baseSepoliaRpc(): string;
+    get aiAgentPrivateKey(): string;
+    get ideaFactoryMantle(): string;
+    get agentIdentityMantle(): string;
+    get daoVotingMantle(): string;
+    get ideaMarketplaceMantle(): string;
+    get ideaFactoryBase(): string;
+    get agentIdentityBase(): string;
+    get daoVotingBase(): string;
+    get ideaMarketplaceBase(): string;
+    get ideaFactoryRHC(): string;
+    get agentIdentityRHC(): string;
+    get daoVotingRHC(): string;
+    get ideaMarketplaceRHC(): string;
+    get usdyMantle(): string;
+    get usdyBase(): string;
+    get webhookBaseUrl(): string;
+    get port(): number;
+}

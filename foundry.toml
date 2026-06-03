@@ -11,9 +11,24 @@ via_ir = true
 fuzz_runs = 256
 verbosity = 4
 
+[profile.mantle]
+rpc_url = "https://rpc.sepolia.mantle.xyz"
+chain_id = 5003
+gas_price = 20000000
+
+[profile.base]
+rpc_url = "https://sepolia.base.org"
+chain_id = 84532
+gas_price = 10000000
+
+[profile.rhc]
+rpc_url = "https://testnet.rpc.robinhood.com"
+chain_id = 1300
+
 [rpc_endpoints]
 mantleSepolia = "https://rpc.sepolia.mantle.xyz"
 baseSepolia = "https://sepolia.base.org"
+rhcTestnet = "https://testnet.rpc.robinhood.com"
 
 [etherscan]
 mantleSepolia = { key = "${MENTLE_API_KEY}" }
