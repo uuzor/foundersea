@@ -11,6 +11,7 @@ export declare class IpfsTools {
     private readonly pinataUrl;
     constructor(configService: ConfigService);
     pinReasoning(content: string, metadata?: Record<string, unknown>): Promise<PinResult>;
+    safePinReasoning(content: string, metadata?: Record<string, unknown>): Promise<PinResult>;
     getContent(ipfsHash: string): Promise<{
         success: boolean;
         content?: unknown;

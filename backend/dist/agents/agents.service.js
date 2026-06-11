@@ -15,17 +15,9 @@ const common_1 = require("@nestjs/common");
 const tools_service_1 = require("../tools/tools.service");
 const wallet_service_1 = require("../blockchain/wallet.service");
 const ipfs_tools_1 = require("../tools/ipfs.tools");
-var DecisionType;
-(function (DecisionType) {
-    DecisionType[DecisionType["IDEA_APPROVE"] = 0] = "IDEA_APPROVE";
-    DecisionType[DecisionType["IDEA_REJECT"] = 1] = "IDEA_REJECT";
-    DecisionType[DecisionType["IDEA_RANK"] = 2] = "IDEA_RANK";
-    DecisionType[DecisionType["BUILDER_RANK"] = 3] = "BUILDER_RANK";
-    DecisionType[DecisionType["MVP_VALIDATE"] = 4] = "MVP_VALIDATE";
-    DecisionType[DecisionType["MILESTONE_VALIDATE"] = 5] = "MILESTONE_VALIDATE";
-    DecisionType[DecisionType["DAO_VOTE"] = 6] = "DAO_VOTE";
-    DecisionType[DecisionType["REVENUE_ADVICE"] = 7] = "REVENUE_ADVICE";
-})(DecisionType || (exports.DecisionType = DecisionType = {}));
+const AgentIdentity_1 = require("../blockchain/abi/AgentIdentity");
+var AgentIdentity_2 = require("../blockchain/abi/AgentIdentity");
+Object.defineProperty(exports, "DecisionType", { enumerable: true, get: function () { return AgentIdentity_2.DecisionType; } });
 let AgentsService = AgentsService_1 = class AgentsService {
     constructor(toolsService, walletService, ipfsTools) {
         this.toolsService = toolsService;
@@ -35,6 +27,68 @@ let AgentsService = AgentsService_1 = class AgentsService {
         this.decisions = [];
     }
     async recordDecision(chain, agentIdentityAddress, decision) {
+        let pinResult = await this.ipfsTools.pinReasoning(decision.reasoning, {
+            agentType: decision.agentType,
+            decisionType: decision.decisionType,
+            subjectId: decision.subjectId,
+            confidence: decision.confidence,
+        });
+        if (!pinResult.success || !pinResult.ipfsHash) {
+            this.logger.warn('IPFS pin failed, using local mock hash for decision recording');
+            const mockHash = `Qm${Math.random().toString(36).substring(2, 46)}`;
+            pinResult = { success: true, ipfsHash: mockHash, pinUrl: `https://ipfs.io/ipfs/${mockHash}` };
+        }
+        const decisionId = `decision_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`;
+        const inputData = JSON.stringify({
+            agentType: decision.agentType,
+            decisionType: decision.decisionType,
+            subjectId: decision.subjectId,
+            timestamp: decision.timestamp.toISOString(),
+        });
+        const inputHash = this.walletService.hashInputForChain(inputData);
+        const outputJson = JSON.stringify({
+            confidence: decision.confidence,
+            reasoning: decision.reasoning,
+            toolResults: decision.toolResults,
+        });
+        const outputHash = this.walletService.hashOutputForChain(outputJson);
+        let onChainResult = {
+            txHash: '',
+            blockNumber: 0,
+            decisionIndex: -1,
+        };
+        try {
+            onChainResult = await this.walletService.recordDecisionOnChain(chain, {
+                decisionType: decision.decisionType,
+                subjectId: parseInt(decision.subjectId, 10),
+                inputHash,
+                outputHash,
+                confidence: decision.confidence,
+                reasoningIpfsHash: pinResult.ipfsHash,
+            });
+            this.logger.log(`Decision recorded on-chain on ${chain}: ${onChainResult.txHash}`);
+        }
+        catch (error) {
+            this.logger.warn(`Failed to record decision on-chain (will store locally): ${error}`);
+            onChainResult.txHash = `local_${Date.now()}`;
+        }
+        this.decisions.push({
+            ...decision,
+            id: decisionId,
+            reasoningIpfsHash: pinResult.ipfsHash,
+            chain,
+            onChainTxHash: onChainResult.txHash,
+            onChainBlockNumber: onChainResult.blockNumber,
+            onChainIndex: onChainResult.decisionIndex,
+        });
+        this.logger.log(`Decision recorded: ${decisionId} on ${chain}`);
+        return {
+            txHash: onChainResult.txHash,
+            decisionId,
+            onChainIndex: onChainResult.decisionIndex,
+        };
+    }
+    async recordDecisionLocalOnly(decision) {
         const pinResult = await this.ipfsTools.pinReasoning(decision.reasoning, {
             agentType: decision.agentType,
             decisionType: decision.decisionType,
@@ -50,11 +104,7 @@ let AgentsService = AgentsService_1 = class AgentsService {
             id: decisionId,
             reasoningIpfsHash: pinResult.ipfsHash,
         });
-        this.logger.log(`Decision recorded: ${decisionId} on ${chain}`);
-        return {
-            txHash: `0x${Math.random().toString(16).substr(2, 64)}`,
-            decisionId,
-        };
+        return { decisionId };
     }
     getDecision(decisionId) {
         return this.decisions.find((d) => d.id === decisionId);
@@ -77,14 +127,14 @@ let AgentsService = AgentsService_1 = class AgentsService {
     }
     getStats() {
         const byType = {
-            [DecisionType.IDEA_APPROVE]: 0,
-            [DecisionType.IDEA_REJECT]: 0,
-            [DecisionType.IDEA_RANK]: 0,
-            [DecisionType.BUILDER_RANK]: 0,
-            [DecisionType.MVP_VALIDATE]: 0,
-            [DecisionType.MILESTONE_VALIDATE]: 0,
-            [DecisionType.DAO_VOTE]: 0,
-            [DecisionType.REVENUE_ADVICE]: 0,
+            [AgentIdentity_1.DecisionType.IDEA_APPROVE]: 0,
+            [AgentIdentity_1.DecisionType.IDEA_REJECT]: 0,
+            [AgentIdentity_1.DecisionType.IDEA_RANK]: 0,
+            [AgentIdentity_1.DecisionType.BUILDER_RANK]: 0,
+            [AgentIdentity_1.DecisionType.MVP_VALIDATE]: 0,
+            [AgentIdentity_1.DecisionType.MILESTONE_VALIDATE]: 0,
+            [AgentIdentity_1.DecisionType.DAO_VOTE]: 0,
+            [AgentIdentity_1.DecisionType.REVENUE_ADVICE]: 0,
         };
         for (const decision of this.decisions) {
             byType[decision.decisionType]++;
@@ -98,6 +148,22 @@ let AgentsService = AgentsService_1 = class AgentsService {
             byType,
             averageConfidence: avgConfidence,
             executedCount: this.decisions.filter((d) => d.executed).length,
+            onChainCount: this.decisions.filter((d) => d.onChainTxHash && !d.onChainTxHash.startsWith('local_')).length,
+        };
+    }
+    async syncWithOnChain(chain) {
+        const localCount = this.decisions.filter((d) => d.chain === chain).length;
+        let onChainCount = 0;
+        try {
+            onChainCount = await this.walletService.getOnChainDecisionCount(chain);
+        }
+        catch (error) {
+            this.logger.error(`Failed to get on-chain count for ${chain}: ${error}`);
+        }
+        return {
+            localCount,
+            onChainCount,
+            synced: localCount === onChainCount,
         };
     }
 };

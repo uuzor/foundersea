@@ -43,6 +43,9 @@ let ConfigService = class ConfigService {
     get baseSepoliaRpc() {
         return this.configService.get('BASE_SEPOLIA_RPC', 'https://sepolia.base.org');
     }
+    get mantleRpc() {
+        return this.configService.get('MANTLE_SEPOLIA_RPC', 'https://rpc.sepolia.mantle.xyz');
+    }
     get aiAgentPrivateKey() {
         return this.configService.get('AI_AGENT_PRIVATE_KEY', '');
     }

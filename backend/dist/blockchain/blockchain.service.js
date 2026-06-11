@@ -14,24 +14,48 @@ exports.BlockchainService = void 0;
 const common_1 = require("@nestjs/common");
 const config_service_1 = require("../config/config.service");
 const ethers_1 = require("ethers");
+const AgentIdentity_1 = require("./abi/AgentIdentity");
 let BlockchainService = BlockchainService_1 = class BlockchainService {
     constructor(configService) {
         this.configService = configService;
         this.logger = new common_1.Logger(BlockchainService_1.name);
         this.providers = new Map();
+        this.contracts = new Map();
         this.initializeProviders();
+        this.initializeContracts();
     }
     initializeProviders() {
-        this.providers.set('robinhood', new ethers_1.JsonRpcProvider(this.configService.robinhoodChainRpc));
         this.providers.set('mantle', new ethers_1.JsonRpcProvider(this.configService.mantleSepoliaRpc));
-        this.providers.set('base', new ethers_1.JsonRpcProvider(this.configService.baseSepoliaRpc));
+    }
+    initializeContracts() {
+        const address = this.getAgentIdentityAddress('mantle');
+        if (!(0, ethers_1.isAddress)(address)) {
+            this.logger.warn(`Skipping AgentIdentity init: invalid mantle address (${address || 'empty'})`);
+            return;
+        }
+        const provider = this.providers.get('mantle');
+        if (provider) {
+            const contract = new ethers_1.Contract(address, AgentIdentity_1.AgentIdentityABI, provider);
+            this.contracts.set('agentIdentity_mantle', contract);
+            this.logger.log(`AgentIdentity contract initialized on mantle: ${address}`);
+        }
+    }
+    getAgentIdentityAddress(chain) {
+        return chain === 'mantle' ? this.configService.agentIdentityMantle : '';
     }
     getProvider(chain) {
         const provider = this.providers.get(chain);
         if (!provider) {
-            throw new Error(`Unsupported chain: ${chain}`);
+            throw new Error(`Unsupported chain: ${chain}. Only mantle is enabled.`);
         }
         return provider;
+    }
+    getContract(contractKey) {
+        const contract = this.contracts.get(contractKey);
+        if (!contract) {
+            throw new Error(`Contract not found: ${contractKey}`);
+        }
+        return contract;
     }
     async getBlockNumber(chain) {
         const provider = this.getProvider(chain);
@@ -41,6 +65,32 @@ let BlockchainService = BlockchainService_1 = class BlockchainService {
         const provider = this.getProvider(chain);
         const feeData = await provider.getFeeData();
         return feeData.gasPrice?.toString() || '0';
+    }
+    async getOnChainDecisionCount(chain) {
+        try {
+            const contract = this.contracts.get(`agentIdentity_${chain}`);
+            if (!contract) {
+                throw new Error(`AgentIdentity not configured on ${chain}`);
+            }
+            return await contract.totalDecisions();
+        }
+        catch (error) {
+            this.logger.error(`Failed to get decision count on ${chain}: ${error}`);
+            return 0;
+        }
+    }
+    async getOnChainDecision(chain, index) {
+        try {
+            const contract = this.contracts.get(`agentIdentity_${chain}`);
+            if (!contract) {
+                throw new Error(`AgentIdentity not configured on ${chain}`);
+            }
+            return await contract.getDecision(index);
+        }
+        catch (error) {
+            this.logger.error(`Failed to get decision ${index} on ${chain}: ${error}`);
+            return null;
+        }
     }
 };
 exports.BlockchainService = BlockchainService;

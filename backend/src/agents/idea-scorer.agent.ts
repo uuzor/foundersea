@@ -128,9 +128,9 @@ export class IdeaScorerAgent {
       const confidence = this.calculateConfidence(scores);
       const recommendation = this.determineRecommendation(scores, confidence);
 
-      // Pin reasoning
+      // Pin reasoning (falls back to local mock hash if Pinata unavailable)
       const reasoning = this.generateReasoning(input, scores, recommendation);
-      const pinResult = await this.ipfsTools.pinReasoning(reasoning, {
+      const pinResult = await this.ipfsTools.safePinReasoning(reasoning, {
         type: 'idea_score',
         ideaId: input.ideaId,
         recommendation,

@@ -18,6 +18,7 @@ let ToolsModule = class ToolsModule {
 exports.ToolsModule = ToolsModule;
 exports.ToolsModule = ToolsModule = __decorate([
     (0, common_1.Module)({
+        imports: [require('../config/config.module').AppConfigModule],
         providers: [tools_service_1.ToolsService, github_tools_1.GithubTools, web_tools_1.WebTools, blockchain_tools_1.BlockchainTools, ipfs_tools_1.IpfsTools],
         exports: [tools_service_1.ToolsService, github_tools_1.GithubTools, web_tools_1.WebTools, blockchain_tools_1.BlockchainTools, ipfs_tools_1.IpfsTools],
     })

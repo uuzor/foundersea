@@ -9,10 +9,9 @@ Object.defineProperty(exports, "__esModule", { value: true });
 exports.AppModule = void 0;
 const common_1 = require("@nestjs/common");
 const config_1 = require("@nestjs/config");
-const agents_module_1 = require("./agents/agents.module");
-const tools_module_1 = require("./tools/tools.module");
 const blockchain_module_1 = require("./blockchain/blockchain.module");
-const config_service_1 = require("./config/config.service");
+const agents_module_1 = require("./agents/agents.module");
+const ideas_module_1 = require("./ideas/ideas.module");
 let AppModule = class AppModule {
 };
 exports.AppModule = AppModule;
@@ -22,13 +21,12 @@ exports.AppModule = AppModule = __decorate([
             config_1.ConfigModule.forRoot({
                 isGlobal: true,
                 envFilePath: '.env',
+                cache: true,
             }),
-            agents_module_1.AgentsModule,
-            tools_module_1.ToolsModule,
             blockchain_module_1.BlockchainModule,
+            agents_module_1.AgentsModule,
+            ideas_module_1.IdeasModule,
         ],
-        providers: [config_service_1.ConfigService],
-        exports: [config_service_1.ConfigService],
     })
 ], AppModule);
 //# sourceMappingURL=app.module.js.map

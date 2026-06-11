@@ -6,6 +6,7 @@ import { BlockchainTools } from './blockchain.tools';
 import { IpfsTools } from './ipfs.tools';
 
 @Module({
+  imports: [require('../config/config.module').AppConfigModule],
   providers: [ToolsService, GithubTools, WebTools, BlockchainTools, IpfsTools],
   exports: [ToolsService, GithubTools, WebTools, BlockchainTools, IpfsTools],
 })

@@ -39,7 +39,45 @@ export declare class AgentsController {
         byType: Record<number, number>;
         averageConfidence: number;
         executedCount: number;
+        onChainCount: number;
     };
+    testAgenticLoop(body: {
+        systemPrompt: string;
+        userMessage: string;
+        maxIterations?: number;
+    }): Promise<{
+        success: boolean;
+        finalResponse: string;
+        toolCalls: Array<{
+            toolName: string;
+            success: boolean;
+            result: unknown;
+            error?: string;
+        }>;
+        iterations: number;
+        error?: string;
+    }>;
+    getAvailableTools(): {
+        tools: Array<{
+            name: string;
+            description: string;
+            parameters: unknown;
+        }>;
+    };
+    testIdeaScoring(input: IdeaScoreInput): Promise<{
+        success: boolean;
+        recommendation: string;
+        overallScore: number;
+        confidence: number;
+        reasoning: string;
+        toolCalls: Array<{
+            toolName: string;
+            success: boolean;
+            result: unknown;
+        }>;
+        iterations: number;
+        error?: string;
+    }>;
 }
 export declare class ScoreIdeaDto {
     ideaId: string;

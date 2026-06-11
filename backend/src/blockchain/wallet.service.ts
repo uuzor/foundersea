@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
-import { ethers, Wallet, JsonRpcProvider, TransactionResponse, Contract, Interface } from 'ethers';
+import { ethers, Wallet, JsonRpcProvider, TransactionResponse, Contract, Interface, isHexString } from 'ethers';
 import { AgentIdentityABI, DecisionType } from './abi/AgentIdentity';
 
 export interface RecordDecisionParams {
@@ -33,48 +33,38 @@ export class WalletService {
 
   private initializeWallet(): void {
     const privateKey = this.configService.aiAgentPrivateKey;
-    if (privateKey) {
+    if (privateKey && privateKey !== '0x_your_private_key_here' && isHexString(privateKey, 32)) {
       this.wallet = new Wallet(privateKey);
       this.logger.log(`AI Agent wallet initialized: ${this.wallet.address}`);
     } else {
-      this.logger.warn('AI Agent private key not configured - wallet operations disabled');
+      this.logger.warn('AI Agent private key not configured or invalid - wallet operations disabled');
     }
   }
 
   private initializeProviders(): void {
-    this.providers.set('robinhood', new JsonRpcProvider(this.configService.robinhoodChainRpc));
     this.providers.set('mantle', new JsonRpcProvider(this.configService.mantleSepoliaRpc));
-    this.providers.set('base', new JsonRpcProvider(this.configService.baseSepoliaRpc));
   }
 
   private initializeContracts(): void {
-    // Initialize AgentIdentity contract on each chain
-    const chains = ['mantle', 'base', 'robinhood'];
+    // Initialize AgentIdentity contract references per chain if wallet present
+    const chains = ['mantle'];
     chains.forEach((chain) => {
       const address = this.getAgentIdentityAddress(chain);
-      if (address && this.wallet) {
+      if (address) {
         const provider = this.providers.get(chain);
         if (provider) {
-          const signer = this.wallet.connect(provider);
-          const contract = new Contract(address, AgentIdentityABI, signer);
+          // Keep contract instance for ethers usage as fallback
+          const signer = this.wallet ? this.wallet.connect(provider) : provider;
+          const contract = new Contract(address, AgentIdentityABI as any, signer as any);
           this.contracts.set(`agentIdentity_${chain}`, contract);
-          this.logger.log(`AgentIdentity signer initialized on ${chain}: ${address}`);
+          this.logger.log(`AgentIdentity contract initialized on ${chain}: ${address}`);
         }
       }
     });
   }
 
   private getAgentIdentityAddress(chain: string): string {
-    switch (chain) {
-      case 'mantle':
-        return this.configService.agentIdentityMantle;
-      case 'base':
-        return this.configService.agentIdentityBase;
-      case 'robinhood':
-        return this.configService.agentIdentityRHC;
-      default:
-        return '';
-    }
+    return chain === 'mantle' ? this.configService.agentIdentityMantle : '';
   }
 
   getAddress(): string {

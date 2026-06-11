@@ -37,6 +37,7 @@ export declare class GithubTools {
     private readonly logger;
     private octokit;
     constructor(configService: ConfigService);
+    private isCredentialsError;
     private parseRepoUrl;
     getRepo(repoUrl: string): Promise<RepoMetadata>;
     getCommits(repoUrl: string, sinceDate: string, untilDate?: string): Promise<CommitInfo[]>;

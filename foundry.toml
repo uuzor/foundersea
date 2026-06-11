@@ -34,5 +34,5 @@ baseSepolia = "https://sepolia.base.org"
 rhcTestnet = "https://testnet.rpc.robinhood.com"
 
 [etherscan]
-mantleSepolia = { key = "${MENTLE_API_KEY}" }
-baseSepolia = { key = "${BASESCAN_API_KEY}" }
+mantleSepolia = { key = "${MANTLE_API_KEY}" }
+baseSepolia = { key = "placeholder" }

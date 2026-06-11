@@ -23,6 +23,13 @@ let GithubTools = GithubTools_1 = class GithubTools {
         if (token) {
             this.octokit = new rest_1.Octokit({ auth: token });
         }
+        else {
+            this.logger.warn('GitHub token not configured - GitHub tools will return empty results');
+        }
+    }
+    isCredentialsError(error) {
+        const msg = error instanceof Error ? error.message : String(error);
+        return msg.includes('Bad credentials') || msg.includes('401') || msg.includes('Unauthorized');
     }
     parseRepoUrl(repoUrl) {
         const patterns = [
@@ -40,6 +47,19 @@ let GithubTools = GithubTools_1 = class GithubTools {
     async getRepo(repoUrl) {
         if (!this.octokit) {
             throw new Error('GitHub token not configured');
+        }
+        try {
+            await this.octokit.rest.users.getAuthenticated();
+        }
+        catch (e) {
+            if (this.isCredentialsError(e)) {
+                this.logger.warn('GitHub token invalid or expired - returning empty repo metadata');
+                return {
+                    name: '', fullName: repoUrl, description: null, stars: 0,
+                    forks: 0, language: null, lastCommitDate: '', openIssues: 0,
+                    url: repoUrl, topics: [], readme: null,
+                };
+            }
         }
         try {
             const { owner, repo } = this.parseRepoUrl(repoUrl);
@@ -96,8 +116,12 @@ let GithubTools = GithubTools_1 = class GithubTools {
             }));
         }
         catch (error) {
+            if (this.isCredentialsError(error)) {
+                this.logger.warn('GitHub token invalid - returning empty commits');
+                return [];
+            }
             this.logger.error(`Failed to get commits: ${repoUrl}`, error);
-            throw error;
+            return [];
         }
     }
     async getFile(repoUrl, filePath) {
@@ -130,6 +154,10 @@ let GithubTools = GithubTools_1 = class GithubTools {
         if (!this.octokit) {
             throw new Error('GitHub token not configured');
         }
+        const emptyResult = {
+            totalRuns: 0, passed: 0, failed: 0, coverage: null,
+            workflowName: 'unknown', status: 'cancelled', lastRunDate: '',
+        };
         try {
             const { owner, repo } = this.parseRepoUrl(repoUrl);
             const runs = await this.octokit.actions.listWorkflowRunsForRepo({
@@ -188,8 +216,12 @@ let GithubTools = GithubTools_1 = class GithubTools {
             };
         }
         catch (error) {
+            if (this.isCredentialsError(error)) {
+                this.logger.warn('GitHub token invalid - returning empty test results');
+                return emptyResult;
+            }
             this.logger.error(`Failed to get test results: ${repoUrl}`, error);
-            throw error;
+            return emptyResult;
         }
     }
 };

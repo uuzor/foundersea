@@ -48,7 +48,15 @@ export class GithubTools {
     const token = this.configService.githubToken;
     if (token) {
       this.octokit = new Octokit({ auth: token });
+    } else {
+      this.logger.warn('GitHub token not configured - GitHub tools will return empty results');
     }
+  }
+
+  /** Check whether a GitHub error is a credentials failure */
+  private isCredentialsError(error: unknown): boolean {
+    const msg = error instanceof Error ? error.message : String(error);
+    return msg.includes('Bad credentials') || msg.includes('401') || msg.includes('Unauthorized');
   }
 
   /**
@@ -77,6 +85,20 @@ export class GithubTools {
   async getRepo(repoUrl: string): Promise<RepoMetadata> {
     if (!this.octokit) {
       throw new Error('GitHub token not configured');
+    }
+
+    // Pre-validate token to avoid cascading errors
+    try {
+      await this.octokit.rest.users.getAuthenticated();
+    } catch (e) {
+      if (this.isCredentialsError(e)) {
+        this.logger.warn('GitHub token invalid or expired - returning empty repo metadata');
+        return {
+          name: '', fullName: repoUrl, description: null, stars: 0,
+          forks: 0, language: null, lastCommitDate: '', openIssues: 0,
+          url: repoUrl, topics: [], readme: null,
+        };
+      }
     }
 
     try {
@@ -150,8 +172,12 @@ export class GithubTools {
         date: commit.commit.author?.date || '',
       }));
     } catch (error) {
+      if (this.isCredentialsError(error)) {
+        this.logger.warn('GitHub token invalid - returning empty commits');
+        return [];
+      }
       this.logger.error(`Failed to get commits: ${repoUrl}`, error);
-      throw error;
+      return [];
     }
   }
 
@@ -195,6 +221,11 @@ export class GithubTools {
     if (!this.octokit) {
       throw new Error('GitHub token not configured');
     }
+
+    const emptyResult: TestResults = {
+      totalRuns: 0, passed: 0, failed: 0, coverage: null,
+      workflowName: 'unknown', status: 'cancelled', lastRunDate: '',
+    };
 
     try {
       const { owner, repo } = this.parseRepoUrl(repoUrl);
@@ -264,8 +295,12 @@ export class GithubTools {
         lastRunDate: latestRun.created_at,
       };
     } catch (error) {
+      if (this.isCredentialsError(error)) {
+        this.logger.warn('GitHub token invalid - returning empty test results');
+        return emptyResult;
+      }
       this.logger.error(`Failed to get test results: ${repoUrl}`, error);
-      throw error;
+      return emptyResult;
     }
   }
 }

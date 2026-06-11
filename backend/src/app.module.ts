@@ -1,21 +1,19 @@
 import { Module } from '@nestjs/common';
 import { ConfigModule } from '@nestjs/config';
-import { AgentsModule } from './agents/agents.module';
-import { ToolsModule } from './tools/tools.module';
 import { BlockchainModule } from './blockchain/blockchain.module';
-import { ConfigService } from './config/config.service';
+import { AgentsModule } from './agents/agents.module';
+import { IdeasModule } from './ideas/ideas.module';
 
 @Module({
   imports: [
     ConfigModule.forRoot({
       isGlobal: true,
       envFilePath: '.env',
+      cache: true,
     }),
-    AgentsModule,
-    ToolsModule,
     BlockchainModule,
+    AgentsModule,
+    IdeasModule,
   ],
-  providers: [ConfigService],
-  exports: [ConfigService],
 })
 export class AppModule {}

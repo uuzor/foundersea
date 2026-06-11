@@ -1,17 +1,17 @@
 "use strict";
 Object.defineProperty(exports, "__esModule", { value: true });
 const core_1 = require("@nestjs/core");
-const common_1 = require("@nestjs/common");
 const swagger_1 = require("@nestjs/swagger");
 const app_module_1 = require("./app.module");
 async function bootstrap() {
+    process.on('unhandledRejection', (reason) => {
+        console.error('Unhandled promise rejection:', reason);
+    });
+    process.on('uncaughtException', (error) => {
+        console.error('Uncaught exception:', error);
+    });
     const app = await core_1.NestFactory.create(app_module_1.AppModule);
     app.enableCors();
-    app.useGlobalPipes(new common_1.ValidationPipe({
-        whitelist: true,
-        transform: true,
-        forbidNonWhitelisted: true,
-    }));
     const config = new swagger_1.DocumentBuilder()
         .setTitle('FounderSea AI Agent Backend')
         .setDescription('AI Agent backend for FounderSea protocol - autonomous decision-making for idea scoring, milestone validation, and builder ranking')

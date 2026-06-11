@@ -136,7 +136,7 @@ let MilestoneValidatorAgent = MilestoneValidatorAgent_1 = class MilestoneValidat
                 demoLive,
                 poolHealthy,
             });
-            const pinResult = await this.ipfsTools.pinReasoning(reasoning, {
+            const pinResult = await this.ipfsTools.safePinReasoning(reasoning, {
                 type: 'milestone_validation',
                 milestoneId: input.milestoneId,
                 recommendation,

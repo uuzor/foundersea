@@ -1,29 +1,17 @@
 import { Module } from '@nestjs/common';
-import { AgentsService } from './agents.service';
+import { AgentService } from './agent.service';
 import { AgentsController } from './agents.controller';
+import { AgentsService } from './agents.service';
 import { IdeaScorerAgent } from './idea-scorer.agent';
 import { MilestoneValidatorAgent } from './milestone-validator.agent';
 import { BuilderRankerAgent } from './builder-ranker.agent';
-import { TokenRouterService } from './token-router.service';
-import { ToolsModule } from '../tools/tools.module';
 import { BlockchainModule } from '../blockchain/blockchain.module';
+import { ToolsModule } from '../tools/tools.module';
 
 @Module({
-  imports: [ToolsModule, BlockchainModule],
+  imports: [BlockchainModule, ToolsModule],
   controllers: [AgentsController],
-  providers: [
-    AgentsService,
-    IdeaScorerAgent,
-    MilestoneValidatorAgent,
-    BuilderRankerAgent,
-    TokenRouterService,
-  ],
-  exports: [
-    AgentsService,
-    IdeaScorerAgent,
-    MilestoneValidatorAgent,
-    BuilderRankerAgent,
-    TokenRouterService,
-  ],
+  providers: [AgentService, AgentsService, IdeaScorerAgent, MilestoneValidatorAgent, BuilderRankerAgent],
+  exports: [AgentService, AgentsService],
 })
 export class AgentsModule {}

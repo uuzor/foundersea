@@ -8,15 +8,18 @@ var __decorate = (this && this.__decorate) || function (decorators, target, key,
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.BlockchainModule = void 0;
 const common_1 = require("@nestjs/common");
-const blockchain_service_1 = require("./blockchain.service");
+const contract_service_1 = require("./contract.service");
+const deployment_service_1 = require("./deployment.service");
 const wallet_service_1 = require("./wallet.service");
+const config_module_1 = require("../config/config.module");
 let BlockchainModule = class BlockchainModule {
 };
 exports.BlockchainModule = BlockchainModule;
 exports.BlockchainModule = BlockchainModule = __decorate([
     (0, common_1.Module)({
-        providers: [blockchain_service_1.BlockchainService, wallet_service_1.WalletService],
-        exports: [blockchain_service_1.BlockchainService, wallet_service_1.WalletService],
+        imports: [config_module_1.AppConfigModule],
+        providers: [contract_service_1.ContractService, deployment_service_1.DeploymentService, wallet_service_1.WalletService],
+        exports: [contract_service_1.ContractService, deployment_service_1.DeploymentService, wallet_service_1.WalletService],
     })
 ], BlockchainModule);
 //# sourceMappingURL=blockchain.module.js.map

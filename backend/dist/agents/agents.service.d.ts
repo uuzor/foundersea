@@ -1,16 +1,8 @@
 import { ToolsService, ToolResult } from '../tools/tools.service';
 import { WalletService } from '../blockchain/wallet.service';
 import { IpfsTools } from '../tools/ipfs.tools';
-export declare enum DecisionType {
-    IDEA_APPROVE = 0,
-    IDEA_REJECT = 1,
-    IDEA_RANK = 2,
-    BUILDER_RANK = 3,
-    MVP_VALIDATE = 4,
-    MILESTONE_VALIDATE = 5,
-    DAO_VOTE = 6,
-    REVENUE_ADVICE = 7
-}
+import { DecisionType } from '../blockchain/abi/AgentIdentity';
+export { DecisionType } from '../blockchain/abi/AgentIdentity';
 export interface AgentDecision {
     id: string;
     agentType: string;
@@ -24,6 +16,10 @@ export interface AgentDecision {
     toolResults: ToolResult[];
     timestamp: Date;
     executed: boolean;
+    chain?: string;
+    onChainTxHash?: string;
+    onChainBlockNumber?: number;
+    onChainIndex?: number;
 }
 export interface AgentConfig {
     model: string;
@@ -37,8 +33,12 @@ export declare class AgentsService {
     private readonly logger;
     private decisions;
     constructor(toolsService: ToolsService, walletService: WalletService, ipfsTools: IpfsTools);
-    recordDecision(chain: string, agentIdentityAddress: string, decision: Omit<AgentDecision, 'id' | 'reasoningIpfsHash'>): Promise<{
+    recordDecision(chain: string, agentIdentityAddress: string, decision: Omit<AgentDecision, 'id' | 'reasoningIpfsHash' | 'onChainTxHash' | 'onChainBlockNumber' | 'onChainIndex'>): Promise<{
         txHash: string;
+        decisionId: string;
+        onChainIndex: number;
+    }>;
+    recordDecisionLocalOnly(decision: Omit<AgentDecision, 'id' | 'reasoningIpfsHash' | 'chain' | 'onChainTxHash' | 'onChainBlockNumber' | 'onChainIndex'>): Promise<{
         decisionId: string;
     }>;
     getDecision(decisionId: string): AgentDecision | undefined;
@@ -51,5 +51,11 @@ export declare class AgentsService {
         byType: Record<DecisionType, number>;
         averageConfidence: number;
         executedCount: number;
+        onChainCount: number;
     };
+    syncWithOnChain(chain: string): Promise<{
+        localCount: number;
+        onChainCount: number;
+        synced: boolean;
+    }>;
 }

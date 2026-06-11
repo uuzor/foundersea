@@ -11,6 +11,7 @@ export declare class ConfigService {
     get robinhoodChainRpc(): string;
     get mantleSepoliaRpc(): string;
     get baseSepoliaRpc(): string;
+    get mantleRpc(): string;
     get aiAgentPrivateKey(): string;
     get ideaFactoryMantle(): string;
     get agentIdentityMantle(): string;

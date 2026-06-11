@@ -46,6 +46,10 @@ export class ConfigService {
     return this.configService.get<string>('BASE_SEPOLIA_RPC', 'https://sepolia.base.org');
   }
 
+  get mantleRpc(): string {
+    return this.configService.get<string>('MANTLE_SEPOLIA_RPC', 'https://rpc.sepolia.mantle.xyz');
+  }
+
   // AI Agent Wallet
   get aiAgentPrivateKey(): string {
     return this.configService.get<string>('AI_AGENT_PRIVATE_KEY', '');

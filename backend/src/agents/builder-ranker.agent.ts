@@ -132,7 +132,7 @@ export class BuilderRankerAgent {
 
       // Pin reasoning
       const reasoning = this.generateReasoning(input, rankings, topPick, mergerCandidates);
-      const pinResult = await this.ipfsTools.pinReasoning(reasoning, {
+      const pinResult = await this.ipfsTools.safePinReasoning(reasoning, {
         type: 'builder_ranking',
         ideaId: input.ideaId,
         builderCount: input.builderAddresses.length,

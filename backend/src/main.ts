@@ -4,19 +4,27 @@ import { SwaggerModule, DocumentBuilder } from '@nestjs/swagger';
 import { AppModule } from './app.module';
 
 async function bootstrap() {
+  process.on('unhandledRejection', (reason) => {
+    console.error('Unhandled promise rejection:', reason);
+  });
+
+  process.on('uncaughtException', (error) => {
+    console.error('Uncaught exception:', error);
+  });
+
   const app = await NestFactory.create(AppModule);
 
   // Enable CORS
   app.enableCors();
 
-  // Global validation pipe
-  app.useGlobalPipes(
-    new ValidationPipe({
-      whitelist: true,
-      transform: true,
-      forbidNonWhitelisted: true,
-    }),
-  );
+  // Global validation pipe - disabled to allow flexible payload structure
+  // app.useGlobalPipes(
+  //   new ValidationPipe({
+  //     whitelist: true,
+  //     transform: true,
+  //     forbidNonWhitelisted: false,
+  //   }),
+  // );
 
   // Swagger documentation
   const config = new DocumentBuilder()

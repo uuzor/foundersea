@@ -36,9 +36,7 @@ export class BlockchainTools {
 
   constructor(private readonly configService: ConfigService) {
     // Initialize providers
-    this.providers.set('robinhood', new JsonRpcProvider(this.configService.robinhoodChainRpc));
     this.providers.set('mantle', new JsonRpcProvider(this.configService.mantleSepoliaRpc));
-    this.providers.set('base', new JsonRpcProvider(this.configService.baseSepoliaRpc));
   }
 
   /**
@@ -47,7 +45,7 @@ export class BlockchainTools {
   private getProvider(chain: string): JsonRpcProvider {
     const provider = this.providers.get(chain);
     if (!provider) {
-      throw new Error(`Unknown chain: ${chain}. Supported: robinhood, mantle, base`);
+      throw new Error(`Unknown chain: ${chain}. Supported: mantle`);
     }
     return provider;
   }
@@ -100,19 +98,11 @@ export class BlockchainTools {
   async getFundingPoolState(chain: string, ideaId: string): Promise<FundingPoolState> {
     // Get the appropriate factory address based on chain
     let factoryAddress: string;
-    switch (chain) {
-      case 'mantle':
-        factoryAddress = this.configService.ideaFactoryMantle;
-        break;
-      case 'base':
-        factoryAddress = this.configService.ideaFactoryBase;
-        break;
-      case 'robinhood':
-        factoryAddress = this.configService.ideaFactoryRHC;
-        break;
-      default:
-        throw new Error(`Unknown chain: ${chain}`);
-    }
+      if (chain !== 'mantle') {
+        throw new Error(`Unsupported chain: ${chain}. Only mantle is enabled.`);
+      }
+
+      factoryAddress = this.configService.ideaFactoryMantle;
 
     if (!factoryAddress) {
       throw new Error(`Factory not configured for chain: ${chain}`);
@@ -159,7 +149,7 @@ export class BlockchainTools {
 
       // Get milestones
       const milestoneCount = await pool.getMilestoneCount();
-      const milestones = [];
+       const milestones: any[] = [];
       for (let i = 0; i < Math.min(Number(milestoneCount), 10); i++) {
         // Simplified - would need full milestone struct
         milestones.push({
@@ -171,11 +161,11 @@ export class BlockchainTools {
       }
 
       // Get competitor payouts
-      const competitorPayouts = [];
-      for (let i = 0; i < 3; i++) {
+       const competitorPayouts: any[] = [];
+       for (let i = 0; i < 3; i++) {
         try {
           const payout = await pool.competitorPayouts(i);
-          competitorPayouts.push({
+           competitorPayouts.push({
             builder: payout[0],
             amount: payout[1].toString(),
             released: payout[2],

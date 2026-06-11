@@ -95,7 +95,7 @@ let BuilderRankerAgent = BuilderRankerAgent_1 = class BuilderRankerAgent {
             const topPick = rankings.find((r) => r.shortlistRecommend) || rankings[0];
             const mergerCandidates = this.findMergerCandidates(rankings);
             const reasoning = this.generateReasoning(input, rankings, topPick, mergerCandidates);
-            const pinResult = await this.ipfsTools.pinReasoning(reasoning, {
+            const pinResult = await this.ipfsTools.safePinReasoning(reasoning, {
                 type: 'builder_ranking',
                 ideaId: input.ideaId,
                 builderCount: input.builderAddresses.length,

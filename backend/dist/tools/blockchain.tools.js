@@ -19,14 +19,12 @@ let BlockchainTools = BlockchainTools_1 = class BlockchainTools {
         this.configService = configService;
         this.logger = new common_1.Logger(BlockchainTools_1.name);
         this.providers = new Map();
-        this.providers.set('robinhood', new ethers_1.JsonRpcProvider(this.configService.robinhoodChainRpc));
         this.providers.set('mantle', new ethers_1.JsonRpcProvider(this.configService.mantleSepoliaRpc));
-        this.providers.set('base', new ethers_1.JsonRpcProvider(this.configService.baseSepoliaRpc));
     }
     getProvider(chain) {
         const provider = this.providers.get(chain);
         if (!provider) {
-            throw new Error(`Unknown chain: ${chain}. Supported: robinhood, mantle, base`);
+            throw new Error(`Unknown chain: ${chain}. Supported: mantle`);
         }
         return provider;
     }
@@ -59,19 +57,10 @@ let BlockchainTools = BlockchainTools_1 = class BlockchainTools {
     }
     async getFundingPoolState(chain, ideaId) {
         let factoryAddress;
-        switch (chain) {
-            case 'mantle':
-                factoryAddress = this.configService.ideaFactoryMantle;
-                break;
-            case 'base':
-                factoryAddress = this.configService.ideaFactoryBase;
-                break;
-            case 'robinhood':
-                factoryAddress = this.configService.ideaFactoryRHC;
-                break;
-            default:
-                throw new Error(`Unknown chain: ${chain}`);
+        if (chain !== 'mantle') {
+            throw new Error(`Unsupported chain: ${chain}. Only mantle is enabled.`);
         }
+        factoryAddress = this.configService.ideaFactoryMantle;
         if (!factoryAddress) {
             throw new Error(`Factory not configured for chain: ${chain}`);
         }

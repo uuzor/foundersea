@@ -1,6 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ConfigService } from '../config/config.service';
-import { JsonRpcProvider, Contract, ethers } from 'ethers';
+import { JsonRpcProvider, Contract, ethers, isAddress } from 'ethers';
 import { AgentIdentityABI, DecisionType } from './abi/AgentIdentity';
 
 export interface OnChainDecision {
@@ -21,44 +21,32 @@ export class BlockchainService {
   }
 
   private initializeProviders(): void {
-    this.providers.set('robinhood', new JsonRpcProvider(this.configService.robinhoodChainRpc));
     this.providers.set('mantle', new JsonRpcProvider(this.configService.mantleSepoliaRpc));
-    this.providers.set('base', new JsonRpcProvider(this.configService.baseSepoliaRpc));
   }
 
   private initializeContracts(): void {
-    // Initialize AgentIdentity contract on each chain
-    const chains = ['mantle', 'base', 'robinhood'];
-    chains.forEach((chain) => {
-      const address = this.getAgentIdentityAddress(chain);
-      if (address) {
-        const provider = this.providers.get(chain);
-        if (provider) {
-          const contract = new Contract(address, AgentIdentityABI, provider);
-          this.contracts.set(`agentIdentity_${chain}`, contract);
-          this.logger.log(`AgentIdentity contract initialized on ${chain}: ${address}`);
-        }
-      }
-    });
+    const address = this.getAgentIdentityAddress('mantle');
+    if (!isAddress(address)) {
+      this.logger.warn(`Skipping AgentIdentity init: invalid mantle address (${address || 'empty'})`);
+      return;
+    }
+
+    const provider = this.providers.get('mantle');
+    if (provider) {
+      const contract = new Contract(address, AgentIdentityABI, provider);
+      this.contracts.set('agentIdentity_mantle', contract);
+      this.logger.log(`AgentIdentity contract initialized on mantle: ${address}`);
+    }
   }
 
   private getAgentIdentityAddress(chain: string): string {
-    switch (chain) {
-      case 'mantle':
-        return this.configService.agentIdentityMantle;
-      case 'base':
-        return this.configService.agentIdentityBase;
-      case 'robinhood':
-        return this.configService.agentIdentityRHC;
-      default:
-        return '';
-    }
+    return chain === 'mantle' ? this.configService.agentIdentityMantle : '';
   }
 
   getProvider(chain: string): JsonRpcProvider {
     const provider = this.providers.get(chain);
     if (!provider) {
-      throw new Error(`Unsupported chain: ${chain}`);
+      throw new Error(`Unsupported chain: ${chain}. Only mantle is enabled.`);
     }
     return provider;
   }
