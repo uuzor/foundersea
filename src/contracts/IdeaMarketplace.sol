@@ -1,14 +1,15 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/cryptography/EIP712.sol";
 import "@openzeppelin/contracts/utils/cryptography/ECDSA.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/IIdeaToken.sol";
 
-contract IdeaMarketplace is Ownable, EIP712 {
+contract IdeaMarketplace is Ownable, EIP712, ReentrancyGuard {
     using SafeERC20 for IERC20;
 
     uint256 public constant PROTOCOL_FEE_BPS = 250; // 2.5%
@@ -90,7 +91,7 @@ contract IdeaMarketplace is Ownable, EIP712 {
         emit ListingCreated(id, msg.sender, _ideaToken, _amount, _askPrice);
     }
 
-    function acceptListing(uint256 listingId) external {
+    function acceptListing(uint256 listingId) external nonReentrant {
         Listing storage listing = listings[listingId];
         require(listing.active, "Listing not active");
         require(block.timestamp < listing.expiry, "Listing expired");
@@ -107,13 +108,15 @@ contract IdeaMarketplace is Ownable, EIP712 {
         uint256 protocolFee = (totalPrice * PROTOCOL_FEE_BPS) / 10000;
         uint256 sellerProceeds = totalPrice - protocolFee;
         
+        // Set inactive BEFORE external calls
+        listing.active = false;
+        
         // Transfer USDY from buyer
         IERC20(usdy).safeTransferFrom(msg.sender, treasury, protocolFee);
         IERC20(usdy).safeTransferFrom(msg.sender, listing.seller, sellerProceeds);
         
         // Transfer IdeaTokens to buyer
         IERC20(listing.ideaToken).safeTransfer(msg.sender, listing.amount);
-        listing.active = false;
         
         emit ListingAccepted(listingId, msg.sender, listing.seller, totalPrice);
     }
@@ -143,7 +146,7 @@ contract IdeaMarketplace is Ownable, EIP712 {
         emit BidPlaced(id, msg.sender, _ideaToken, _amount, _bidPrice);
     }
 
-    function acceptBid(uint256 bidId) external {
+    function acceptBid(uint256 bidId) external nonReentrant {
         Bid storage bid = bids[bidId];
         require(bid.active, "Bid not active");
         require(block.timestamp < bid.expiry, "Bid expired");
@@ -153,14 +156,15 @@ contract IdeaMarketplace is Ownable, EIP712 {
         uint256 protocolFee = (totalPrice * PROTOCOL_FEE_BPS) / 10000;
         uint256 sellerProceeds = totalPrice - protocolFee;
         
+        // Set inactive BEFORE external calls (checks-effects-interactions)
+        bid.active = false;
+        
         // Transfer tokens from seller to bidder
         IERC20(bid.ideaToken).safeTransferFrom(msg.sender, bid.bidder, bid.amount);
         
         // Transfer USDY
         IERC20(usdy).safeTransferFrom(bid.bidder, treasury, protocolFee);
         IERC20(usdy).safeTransferFrom(bid.bidder, msg.sender, sellerProceeds);
-        
-        bid.active = false;
         
         emit BidAccepted(bidId, msg.sender, bid.bidder, totalPrice);
     }
@@ -170,7 +174,7 @@ contract IdeaMarketplace is Ownable, EIP712 {
         address seller,
         Bid calldata bid,
         bytes calldata signature
-    ) external {
+    ) external nonReentrant {
         require(bid.active, "Bid not active");
         require(block.timestamp < bid.expiry, "Bid expired");
         
@@ -206,13 +210,13 @@ contract IdeaMarketplace is Ownable, EIP712 {
         emit SignedBidSettled(nextBidId, seller, bid.bidder);
     }
 
-    function cancelListing(uint256 listingId) external {
+    function cancelListing(uint256 listingId) external nonReentrant {
         Listing storage listing = listings[listingId];
         require(listing.seller == msg.sender, "Not seller");
         require(listing.active, "Not active");
         
-        IERC20(listing.ideaToken).safeTransfer(msg.sender, listing.amount);
         listing.active = false;
+        IERC20(listing.ideaToken).safeTransfer(msg.sender, listing.amount);
     }
 
     function cancelBid(uint256 bidId) external {

@@ -1,14 +1,27 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/IIdeaToken.sol";
 import "./interfaces/IFundingGate.sol";
 
-contract FundingPool is Ownable {
+contract FundingPool is Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
+    
+    // ============================================
+    // STATE ENUMS
+    // ============================================
+    
+    // Tranche state for continuous commitment model
+    // GENESIS -> OPEN -> CLOSED (replaces soft-cap/hard-cap binary)
+    enum TrancheState {
+        GENESIS,  // Building started with creator deposit + protocol seed
+        OPEN,     // Public deposits accepted, milestone proof events
+        CLOSED    // Hard cap hit, governance vote, or builder completed final milestone
+    }
     
     // Milestone status enum for clean state machine
     enum MilestoneStatus {
@@ -19,6 +32,10 @@ contract FundingPool is Ownable {
         DISPUTED    // Under dispute resolution
     }
 
+    // ============================================
+    // CORE STATE
+    // ============================================
+    
     IERC20 public fundingToken;
     address public ideaToken;
     address public gate;
@@ -26,17 +43,31 @@ contract FundingPool is Ownable {
     address public dao;
     address public builder;
     address public factory;
+    
+    TrancheState public trancheState;
 
-    uint256 public softCap;
     uint256 public hardCap;
     uint256 public raisedAmount;
     uint256 public competitionPrizeBps;
     
-    bool public fundingClosed;
     bool public builderAssigned;
+    
+    // Genesis stake tracking
+    uint256 public genesisAmount;        // Creator's deposit + protocol seed
+    uint256 public genesisMintedTokens;  // Tokens minted to genesis depositors
 
+    // AI trust model: tiered release thresholds
+    uint256 public constant LARGE_RELEASE_THRESHOLD = 10_000e6; // $10k USDY - requires DAO + timelock
+    uint256 public constant TIMELOCK_DURATION = 48 hours;
+    
+    mapping(uint256 => uint256) public timelockExpiry;   // Milestone index => expiry timestamp
+    mapping(uint256 => bool) public daoApproved;          // Milestone index => DAO approval flag
+
+    // ============================================
+    // COMPETITOR & MILESTONE STRUCTURES
+    // ============================================
+    
     // Competitor payouts: top 3 builders from MVP competition
-    // Released when AI validates their MVPs above competition threshold
     struct CompetitorPayout {
         address builder;
         uint256 amount;
@@ -48,11 +79,11 @@ contract FundingPool is Ownable {
     CompetitorPayout[3] public competitorPayouts; // Exactly 3 slots
     bool public competitorsSet;
     
-    // Development milestones (index 0 onwards, after winner selected)
+    // Development milestones
     struct Milestone {
         uint256 amount;
         uint256 deadline;
-        MilestoneStatus status;   // Use enum instead of booleans
+        MilestoneStatus status;
         uint256 aiConfidence;
         string validationIpfsHash;
     }
@@ -61,12 +92,26 @@ contract FundingPool is Ownable {
     
     uint256 public constant COMPETITION_THRESHOLD = 60;
     
+    // Refund tracking for tranche-aware model
+    uint256 public lastValidatedMilestone;      // Index of last validated milestone (for refund cutoff)
+    bool public builderAbandoned;               // Flag when builder is marked abandoned
+    uint256 public openTrancheDeposits;         // Total deposits made during OPEN tranche
+
+    // ============================================
+    // EVENTS
+    // ============================================
+    
+    event TrancheTransition(TrancheState from, TrancheState to);
     event Deposit(address indexed investor, uint256 amount, uint256 tokensMinted);
-    event FundingClosed(bool softCapMet);
+    event GenesisStake(address indexed depositor, uint256 amount, uint256 tokensMinted);
+    event FundingClosed(bool raisedHardCap, uint256 totalRaised);
     event MilestoneReleased(uint256 index, uint256 amount);
     event MilestoneValidated(uint256 index, uint256 confidence);
     event CompetitorPayoutReleased(uint256 slot, address builder, uint256 amount);
     event BuilderAssigned(address indexed builder);
+    event RefundProcessed(address indexed investor, uint256 amount, uint256 tokensBurned);
+    event TimelockStarted(uint256 indexed index, uint256 expiry);
+    event MilestoneDaoApproved(uint256 indexed index);
 
     modifier onlyAIAgent() {
         require(msg.sender == aiAgent, "Only AI agent");
@@ -77,18 +122,18 @@ contract FundingPool is Ownable {
         address _fundingToken,
         address _gate,
         address _creator,
-        uint256 _softCap,
         uint256 _hardCap,
         uint256 _competitionPrizeBps,
         address _factory
     ) Ownable(_creator) {
         require(_fundingToken != address(0), "Invalid token");
+        require(_hardCap > 0, "Invalid hard cap");
         fundingToken = IERC20(_fundingToken);
         gate = _gate;
-        softCap = _softCap;
         hardCap = _hardCap;
         competitionPrizeBps = _competitionPrizeBps;
         factory = _factory;
+        trancheState = TrancheState.GENESIS; // Start in genesis state
     }
 
     // Update factory address and optionally transfer ownership (called by current factory or owner)
@@ -124,24 +169,68 @@ contract FundingPool is Ownable {
         return address(fundingToken);
     }
 
-    // Funding round
-    function deposit(uint256 amount) external {
-        require(!fundingClosed, "Funding closed");
+    // ============================================
+    // GENESIS STAKE & DEPOSITS
+    // ============================================
+    
+    // Genesis stake: creator deposit + protocol seed, deploys immediately on AI approval
+    // Unlocks Tranche 0, allows building to start without waiting for crowd
+    function genesisStake(address depositor, uint256 amount) external onlyFactory nonReentrant {
+        require(trancheState == TrancheState.GENESIS, "Not in genesis");
+        require(amount > 0, "Invalid amount");
+        
+        fundingToken.safeTransferFrom(msg.sender, address(this), amount);
+        raisedAmount += amount;
+        genesisAmount += amount;
+        
+        // Calculate tokens at genesis price (1:1 for genesis to reward early commitment)
+        uint256 tokensToMint = (amount * 1e6) / 1e6; // 1:1 ratio for genesis
+        IIdeaToken(ideaToken).mint(depositor, tokensToMint);
+        genesisMintedTokens += tokensToMint;
+        
+        emit GenesisStake(depositor, amount, tokensToMint);
+    }
+    
+    // Record genesis stake without token transfer (for protocol treasury deposit already received)
+    function recordGenesisStake(address depositor, uint256 amount) external onlyFactory {
+        require(trancheState == TrancheState.GENESIS, "Not in genesis");
+        require(amount > 0, "Invalid amount");
+        
+        raisedAmount += amount;
+        genesisAmount += amount;
+        
+        // Calculate tokens at genesis price (1:1 for genesis)
+        uint256 tokensToMint = (amount * 1e6) / 1e6; // 1:1 ratio for genesis
+        IIdeaToken(ideaToken).mint(depositor, tokensToMint);
+        genesisMintedTokens += tokensToMint;
+    }
+    
+    // Public deposits only in OPEN tranche
+    // Early investors get better rates via bonding curve
+    function deposit(uint256 amount) external nonReentrant {
+        require(trancheState == TrancheState.OPEN, "Not accepting deposits");
         require(raisedAmount + amount <= hardCap, "Exceeds hard cap");
         require(IFundingGate(gate).canFund(msg.sender), "Gate check failed");
+        require(amount > 0, "Invalid amount");
 
         fundingToken.safeTransferFrom(msg.sender, address(this), amount);
         raisedAmount += amount;
+        openTrancheDeposits += amount;
 
         // Calculate tokens with bonding curve (early investors get more tokens)
         uint256 tokensToMint = tokensForAmount(amount);
         IIdeaToken(ideaToken).mint(msg.sender, tokensToMint);
         
         emit Deposit(msg.sender, amount, tokensToMint);
+        
+        // Auto-close if hard cap reached
+        if (raisedAmount >= hardCap) {
+            _closeFunding(true);
+        }
     }
 
     // Linear bonding curve: price increases from base to 2x as pool fills
-    // Early investors pay less, taking more risk - aligns with RWA thesis
+    // Applies during OPEN tranche only - rewards early investors who bet on execution
     function tokensForAmount(uint256 amount) public view returns (uint256) {
         if (hardCap == 0) return 0;
         
@@ -152,31 +241,43 @@ contract FundingPool is Ownable {
         
         return (amount * 1e6) / price;
     }
-
+    
+    // ============================================
+    // TRANCHE TRANSITIONS
+    // ============================================
+    
+    // Transition to OPEN: called by AI when first milestone is released
+    // This signals the market that building has started and proof events are live
+    function transitionToOpen() external onlyFactory {
+        require(trancheState == TrancheState.GENESIS, "Not in genesis");
+        trancheState = TrancheState.OPEN;
+        emit TrancheTransition(TrancheState.GENESIS, TrancheState.OPEN);
+    }
+    
+    // Close funding: hard cap hit, governance vote, or final milestone complete
     function closeFunding() external onlyOwner {
-        require(!fundingClosed, "Already closed");
-        fundingClosed = true;
-        
-        bool metSoftCap = raisedAmount >= softCap;
-        
-        if (metSoftCap) {
-            // Competition allocation is carved out, distributed to top 3 later
-            // No milestone[0] created here - competitors are set separately
-            emit FundingClosed(true);
-        } else {
-            emit FundingClosed(false);
-        }
+        require(trancheState == TrancheState.OPEN, "Not open");
+        _closeFunding(raisedAmount >= hardCap);
+    }
+    
+    function _closeFunding(bool raisedHardCap) internal {
+        trancheState = TrancheState.CLOSED;
+        emit FundingClosed(raisedHardCap, raisedAmount);
+    }
+    
+    // Get tranche state as uint8 for external reading
+    function getTrancheState() external view returns (uint8) {
+        return uint8(trancheState);
     }
 
-    // Set top 3 competitors after funding closes
+    // Set top 3 competitors after funding is OPEN or CLOSED
     // amounts should sum to competitionPrizeBps portion of raised
     function setCompetitorPayouts(
         address[3] calldata _builders,
         uint256[3] calldata _amounts
     ) external onlyOwner {
-        require(fundingClosed, "Funding not closed");
+        require(trancheState != TrancheState.GENESIS, "Still in genesis");
         require(!competitorsSet, "Competitors already set");
-        require(raisedAmount >= softCap, "Soft cap not met");
         
         competitorsSet = true;
         for (uint256 i = 0; i < 3; i++) {
@@ -211,17 +312,13 @@ contract FundingPool is Ownable {
         emit CompetitorPayoutReleased(slot, p.builder, p.amount);
     }
 
-    function checkSoftCapMet() public view returns (bool) {
-        return raisedAmount >= softCap;
-    }
-
     function assignBuilder(address _builder, uint256[] memory milestoneAmounts, uint256[] memory milestoneDeadlines) 
         external onlyOwner {
         require(!builderAssigned, "Builder already assigned");
         builder = _builder;
         builderAssigned = true;
         
-        // Add development milestones (starting from index 1, index 0 is competition prize)
+        // Add development milestones
         for (uint256 i = 0; i < milestoneAmounts.length; i++) {
             milestones.push(Milestone({
                 amount: milestoneAmounts[i],
@@ -236,10 +333,18 @@ contract FundingPool is Ownable {
     }
 
     // AI agent calls this after milestone validation passes
-    function releaseMilestone(uint256 index) external onlyAIAgent {
+    // Large releases require DAO approval + 48h timelock for security
+    function releaseMilestone(uint256 index) external onlyAIAgent nonReentrant {
         Milestone storage m = milestones[index];
         require(m.status == MilestoneStatus.VALIDATED && m.aiConfidence >= 75, "Not validated or low confidence");
         require(builder != address(0), "No builder");
+        
+        // Large releases (≥ $10k USDY) require DAO approval + timelock
+        if (m.amount >= LARGE_RELEASE_THRESHOLD) {
+            require(daoApproved[index], "DAO approval required");
+            require(timelockExpiry[index] > 0 && block.timestamp >= timelockExpiry[index], "Timelock active");
+        }
+        
         m.status = MilestoneStatus.RELEASED;
         fundingToken.safeTransfer(builder, m.amount);
         emit MilestoneReleased(index, m.amount);
@@ -253,6 +358,25 @@ contract FundingPool is Ownable {
         m.status = MilestoneStatus.RELEASED;
         fundingToken.safeTransfer(builder, m.amount);
         emit MilestoneReleased(index, m.amount);
+    }
+    
+    // DAO approves large milestone release and starts timelock
+    // Called by AI agent after validation to trigger the timelock process
+    function startTimelock(uint256 index) external onlyAIAgent {
+        require(index < milestones.length, "Invalid index");
+        require(milestones[index].amount >= LARGE_RELEASE_THRESHOLD, "Below threshold");
+        require(timelockExpiry[index] == 0, "Timelock already started");
+        timelockExpiry[index] = block.timestamp + TIMELOCK_DURATION;
+        emit TimelockStarted(index, timelockExpiry[index]);
+    }
+    
+    // DAO approves large milestone release (required before timelock expires)
+    function daoApproveMilestone(uint256 index) external {
+        require(msg.sender == dao, "Only DAO");
+        require(index < milestones.length, "Invalid index");
+        require(milestones[index].amount >= LARGE_RELEASE_THRESHOLD, "Below threshold");
+        daoApproved[index] = true;
+        emit MilestoneDaoApproved(index);
     }
 
     // DAO can slash competitor payout if they abandon
@@ -292,23 +416,49 @@ contract FundingPool is Ownable {
         return milestones[index].status;
     }
 
-    // Refund if soft cap not met
+    // ============================================
+    // REFUNDS (Tranche-aware)
+    // ============================================
+    
+    // Tranche-aware refund: only deposits made after last validated milestone
+    // are eligible for refund if builder abandons
+    // Genesis depositors took risk, they don't get bailed out
     function refund() external {
-        require(fundingClosed, "Funding not closed");
-        require(!checkSoftCapMet(), "Soft cap met");
+        require(builderAbandoned, "Builder not abandoned");
+        require(trancheState == TrancheState.CLOSED, "Not closed");
         
         uint256 balance = IIdeaToken(ideaToken).balanceOf(msg.sender);
         require(balance > 0, "No tokens");
         
-        // Snapshot supply before burning
         uint256 currentSupply = IIdeaToken(ideaToken).totalSupply();
+        require(currentSupply > 0, "No supply");
         
-        // Burn user's tokens
+        // Calculate refund proportionally from OPEN tranche deposits
+        // Only deposits made AFTER the last validated milestone get refunded
+        uint256 refundAmount = (balance * openTrancheDeposits) / currentSupply;
+        require(refundAmount > 0, "No refund due");
+        
+        // Burn tokens
         IIdeaToken(ideaToken).burn(msg.sender, balance);
         
-        // Calculate refund proportionally
-        uint256 refundAmount = balance * raisedAmount / currentSupply;
+        // Send refund
         fundingToken.safeTransfer(msg.sender, refundAmount);
+        
+        emit RefundProcessed(msg.sender, refundAmount, balance);
+    }
+    
+    // Mark builder as abandoned (called by DAO or factory after timeout)
+    function markAbandoned() external {
+        require(msg.sender == dao || msg.sender == factory, "Not authorized");
+        require(!builderAbandoned, "Already marked");
+        require(builderAssigned, "No builder assigned");
+        builderAbandoned = true;
+        _closeFunding(false);
+    }
+    
+    // Record last validated milestone (called when milestone validated)
+    function recordValidatedMilestone(uint256 index) external onlyFactory {
+        lastValidatedMilestone = index;
     }
 
     function addMilestones(uint256[] memory amounts, uint256[] memory deadlines) external onlyOwner {

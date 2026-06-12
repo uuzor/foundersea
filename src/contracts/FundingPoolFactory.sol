@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "./FundingGate.sol";
@@ -13,7 +13,6 @@ contract FundingPoolFactory is Ownable, IFundingPoolFactory {
         uint256 indexed ideaId,
         address fundingPool,
         address fundingGate,
-        uint256 softCap,
         uint256 hardCap
     );
 
@@ -21,10 +20,10 @@ contract FundingPoolFactory is Ownable, IFundingPoolFactory {
         uint256 ideaId,
         address usdy,
         address creator,
-        uint256 softCap,
-        uint256 hardCap,
+        uint256 hardCap,  // Removed softCap - continuous commitment model
         uint256 competitionPrizeBps,
-        address treasury
+        address treasury,
+        address ideaFactory
     ) external override returns (address fundingPool, address fundingGate) {
         address gate = address(new FundingGate(creator, msg.sender));
 
@@ -32,20 +31,19 @@ contract FundingPoolFactory is Ownable, IFundingPoolFactory {
         FundingPool pool = new FundingPool(
             usdy,
             gate,
-            address(this),  // Factory becomes owner
-            softCap,
+            address(this),  // FundingPoolFactory becomes owner initially
             hardCap,
             competitionPrizeBps,
             treasury
         );
         
-        // Update factory to this address and transfer ownership to treasury
-        pool.updateFactory(address(this), treasury);
+        // Update factory to IdeaFactory address and transfer ownership to treasury
+        pool.updateFactory(ideaFactory, treasury);
         
         fundingPool = address(pool);
         fundingGate = gate;
 
-        emit FundingPoolCreated(ideaId, fundingPool, fundingGate, softCap, hardCap);
+        emit FundingPoolCreated(ideaId, fundingPool, fundingGate, hardCap);
     }
 
     function setIdeaTokenOnPool(address fundingPool, address ideaToken) external onlyOwner {

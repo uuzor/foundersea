@@ -1,11 +1,12 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/access/Ownable.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/utils/Strings.sol";
 import "./interfaces/IFundingPoolFactory.sol";
+import "./interfaces/IFundingPool.sol";
 import "./interfaces/IIdeaTokenFactory.sol";
 import "./interfaces/IIdeaToken.sol";
 import "./FundingPool.sol";
@@ -16,34 +17,40 @@ contract IdeaFactory is Ownable {
     using SafeERC20 for IERC20;
     using Strings for uint256;
     
-    // Idea status enum for clean state machine tracking
+    // ============================================
+    // STATUS ENUMS
+    // ============================================
+    
     enum IdeaStatus {
         PENDING,      // Just created, awaiting AI review
-        APPROVED,      // AI approved, funding can proceed
-        REJECTED,      // AI rejected
-        ABANDONED,     // Creator abandoned
-        FUNDING,       // Funding pool active
-        ACTIVE,        // Builder assigned, in development
-        COMPLETED,     // All milestones done
-        FAILED        // Soft cap not met or other failure
+        APPROVED,     // AI approved, genesis stake can deploy, building starts
+        REJECTED,     // AI rejected
+        ABANDONED,    // Creator abandoned
+        ACTIVE,       // Builder assigned, in development
+        COMPLETED,    // All milestones done
+        FAILED        // Builder abandoned or other failure
     }
 
+    // ============================================
+    // CORE STATE
+    // ============================================
+    
     IERC20 public immutable USDY;
-    uint256 public constant MIN_CREATOR_DEPOSIT = 500e6; // $500 USDY
+    uint256 public constant MIN_CREATOR_DEPOSIT = 500e6; // $500 USDY - genesis stake
+    uint256 public constant PROTOCOL_SEED_AMOUNT = 1000e6; // $1000 USDY - protocol seed per idea
     uint256 public constant ABANDONMENT_FEE_BPS = 1000; // 10% kept on abandon
+    
     address public aiAgent;
     address public treasury;
     address public agentIdentity;
     IFundingPoolFactory public fundingPoolFactory;
     IIdeaTokenFactory public ideaTokenFactory;
-
+    
+    // Idea configuration (continuous commitment model - no soft cap)
     struct IdeaConfig {
         string metadataIpfsHash;     // title, description, roadmap, category
-        uint256 targetRaise;
-        uint256 softCap;
-        uint256 hardCap;
-        uint256 fundingDeadline;
-        uint256 competitionPrizeBps; // % of raise reserved as competition prize (Milestone 0)
+        uint256 hardCap;            // Upper bound for fundraising
+        uint256 competitionPrizeBps; // % of raise reserved as competition prize
         uint256 builderAllocBps;     // % of IdeaToken supply to winning builder
         FactoryGateType gateType;
         bytes gateParams;
@@ -54,7 +61,7 @@ contract IdeaFactory is Ownable {
         address ideaToken;
         address fundingPool;
         address fundingGate;
-        IdeaStatus status;          // Use enum instead of boolean soup
+        IdeaStatus status;
         uint256 aiScore;
         string approvalReasonHash;
         IdeaConfig config;
@@ -69,12 +76,18 @@ contract IdeaFactory is Ownable {
     
     uint256 public nextIdeaId;
     
+    // ============================================
+    // EVENTS
+    // ============================================
+    
     event IdeaCreated(uint256 indexed ideaId, address creator, address ideaToken, address fundingPool);
     event IdeaApprovedByAI(uint256 indexed ideaId, uint256 score);
     event IdeaRejectedByAI(uint256 indexed ideaId, string reasonIpfsHash);
     event IdeaAbandoned(uint256 indexed ideaId, uint256 refundAmount);
     event FundingPoolConfigured(uint256 indexed ideaId, address fundingPool);
     event RevenueSourceWired(uint256 indexed ideaId, address revenueSource);
+    event GenesisStakeDeployed(uint256 indexed ideaId, uint256 creatorDeposit, uint256 protocolSeed);
+    event TransitionedToActive(uint256 indexed ideaId);
 
     constructor(
         address _usdy, 
@@ -97,6 +110,11 @@ contract IdeaFactory is Ownable {
     function setAgentIdentity(address _agentIdentity) external onlyOwner {
         agentIdentity = _agentIdentity;
     }
+    
+    modifier onlyAIAgent() {
+        require(msg.sender == aiAgent, "Only AI agent");
+        _;
+    }
 
     function setFactories(address _fundingPoolFactory, address _ideaTokenFactory) external onlyOwner {
         fundingPoolFactory = IFundingPoolFactory(_fundingPoolFactory);
@@ -104,20 +122,18 @@ contract IdeaFactory is Ownable {
     }
 
     function createIdea(IdeaConfig calldata config) external returns (uint256 ideaId) {
-        require(config.softCap <= config.hardCap, "Invalid caps");
-        require(config.targetRaise >= config.softCap, "Invalid target");
+        require(config.hardCap > 0, "Invalid hard cap");
         require(config.builderAllocBps >= 1000 && config.builderAllocBps <= 30000, "Invalid builder alloc");
         require(config.competitionPrizeBps <= 5000, "Invalid competition prize");
         
-        // Transfer minimum deposit
+        // Transfer minimum deposit (creator's genesis stake)
         USDY.safeTransferFrom(msg.sender, address(this), MIN_CREATOR_DEPOSIT);
 
         ideaId = nextIdeaId++;
 
-        // Deploy FundingPool and FundingGate via factory
+        // Deploy FundingPool and FundingGate via factory (no soft cap)
         (address fundingPool, address fundingGate) = _deployFundingPool(
             ideaId, 
-            config.softCap, 
             config.hardCap, 
             config.competitionPrizeBps,
             config.gateType,
@@ -127,8 +143,8 @@ contract IdeaFactory is Ownable {
         // Deploy IdeaToken via factory
         address ideaToken = _deployIdeaToken(ideaId, fundingPool, msg.sender, config.builderAllocBps);
 
-        // Wire FundingPool to IdeaToken (via factory since factory is owner)
-        fundingPoolFactory.setIdeaTokenOnPool(fundingPool, ideaToken);
+        // Wire FundingPool to IdeaToken
+        FundingPool(fundingPool).setIdeaToken(ideaToken);
 
         // Create the idea
         ideas[ideaId] = Idea({
@@ -152,7 +168,6 @@ contract IdeaFactory is Ownable {
 
     function _deployFundingPool(
         uint256 ideaId,
-        uint256 softCap,
         uint256 hardCap,
         uint256 competitionPrizeBps,
         FactoryGateType gateType,
@@ -162,10 +177,10 @@ contract IdeaFactory is Ownable {
             ideaId,
             address(USDY),
             msg.sender,
-            softCap,
             hardCap,
             competitionPrizeBps,
-            treasury
+            treasury,
+            address(this)
         );
         
         if (gateType != FactoryGateType.OPEN) {
@@ -191,7 +206,8 @@ contract IdeaFactory is Ownable {
         );
     }
 
-    // Called by AI agent after scoring. If rejected, creator gets 90% back.
+    // Called by AI agent after scoring. If approved, deploy genesis stake + transition to active.
+    // Building starts immediately - no waiting for crowd raise
     function aiApproveIdea(uint256 ideaId, uint256 score, string calldata reasonHash)
         external {
         require(msg.sender == aiAgent, "Only AI agent");
@@ -203,7 +219,33 @@ contract IdeaFactory is Ownable {
         ideas[ideaId].approvalReasonHash = reasonHash;
         aiApproved[ideaId] = true;
         
+        // Deploy genesis stake: creator deposit + protocol seed
+        // Building starts immediately on AI approval
+        _deployGenesisStake(ideaId);
+        
         emit IdeaApprovedByAI(ideaId, score);
+    }
+    
+    // Deploy genesis stake: creator's $500 + protocol's $1000 = $1500 for first milestone
+    function _deployGenesisStake(uint256 ideaId) internal {
+        Idea storage idea = ideas[ideaId];
+        address fundingPool = idea.fundingPool;
+        
+        // Transfer protocol seed from treasury to funding pool
+        USDY.safeTransferFrom(treasury, fundingPool, PROTOCOL_SEED_AMOUNT);
+        
+        // Approve funding pool to pull creator's deposit from factory
+        USDY.approve(fundingPool, MIN_CREATOR_DEPOSIT);
+        
+        // Call genesis stake on funding pool for creator's deposit
+        IFundingPool(fundingPool).genesisStake(idea.creator, MIN_CREATOR_DEPOSIT);
+        
+        // Note: The treasury deposit was already transferred to funding pool in step 1
+        // The funding pool's genesisStake already tracks the raised amount correctly
+        // We just need to record the treasury's share as genesis stake
+        IFundingPool(fundingPool).recordGenesisStake(treasury, PROTOCOL_SEED_AMOUNT);
+        
+        emit GenesisStakeDeployed(ideaId, MIN_CREATOR_DEPOSIT, PROTOCOL_SEED_AMOUNT);
     }
 
     function aiRejectIdea(uint256 ideaId, string calldata reasonHash) external {
@@ -234,16 +276,35 @@ contract IdeaFactory is Ownable {
         emit IdeaAbandoned(ideaId, refundAmount);
     }
     
-    // Update status for funding/active states (called by funding pool or external logic)
-    function updateIdeaStatus(uint256 ideaId, IdeaStatus newStatus) external {
-        // Only allow transitions that make sense
+    // Update status - simplified for continuous commitment model
+    function updateIdeaStatus(uint256 ideaId, IdeaStatus newStatus) external onlyOwner {
         IdeaStatus current = ideas[ideaId].status;
-        if (newStatus == IdeaStatus.FUNDING) {
+        
+        // Validate transitions
+        if (newStatus == IdeaStatus.ACTIVE) {
             require(current == IdeaStatus.APPROVED, "Must be approved first");
-        } else if (newStatus == IdeaStatus.ACTIVE) {
-            require(current == IdeaStatus.FUNDING, "Must complete funding first");
+        } else if (newStatus == IdeaStatus.COMPLETED) {
+            require(current == IdeaStatus.ACTIVE, "Must be active first");
+        } else if (newStatus == IdeaStatus.FAILED) {
+            require(current == IdeaStatus.ACTIVE, "Must be active first");
         }
+        
         ideas[ideaId].status = newStatus;
+        if (newStatus == IdeaStatus.ACTIVE) {
+            emit TransitionedToActive(ideaId);
+        }
+    }
+    
+    // Called by AI agent to transition approved idea to ACTIVE (after builder assigned)
+    function transitionToActive(uint256 ideaId) external onlyAIAgent {
+        require(ideas[ideaId].status == IdeaStatus.APPROVED, "Not approved");
+        
+        ideas[ideaId].status = IdeaStatus.ACTIVE;
+        
+        // Transition funding pool to OPEN (from GENESIS)
+        IFundingPool(ideas[ideaId].fundingPool).transitionToOpen();
+        
+        emit TransitionedToActive(ideaId);
     }
     
     function getIdeaStatus(uint256 ideaId) external view returns (IdeaStatus) {

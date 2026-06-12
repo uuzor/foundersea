@@ -1,13 +1,14 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
 import "@openzeppelin/contracts/token/ERC20/ERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/IERC20.sol";
 import "@openzeppelin/contracts/token/ERC20/utils/SafeERC20.sol";
 import "@openzeppelin/contracts/access/Ownable.sol";
+import "@openzeppelin/contracts/utils/ReentrancyGuard.sol";
 import "./interfaces/IIdeaToken.sol";
 
-contract IdeaToken is ERC20, Ownable {
+contract IdeaToken is ERC20, Ownable, ReentrancyGuard {
     using SafeERC20 for IERC20;
     
     IERC20 public USDY;
@@ -28,6 +29,19 @@ contract IdeaToken is ERC20, Ownable {
     modifier onlyFundingPool() {
         require(msg.sender == fundingPool, "Only FundingPool");
         _;
+    }
+
+    // Revenue accounting fix: snapshot both parties' debt at transfer time
+    // This prevents transferred tokens from claiming revenue they didn't earn
+    // Override _update for OpenZeppelin v5.x compatibility
+    function _update(address from, address to, uint256 value) internal override {
+        if (from != address(0)) {
+            revenueDebt[from] = revenuePerTokenStored;
+        }
+        if (to != address(0)) {
+            revenueDebt[to] = revenuePerTokenStored;
+        }
+        super._update(from, to, value);
     }
 
     constructor(
@@ -75,7 +89,7 @@ contract IdeaToken is ERC20, Ownable {
     }
 
     // Token holders call this to claim their share
-    function claimRevenue() external returns (uint256 amount) {
+    function claimRevenue() external nonReentrant returns (uint256 amount) {
         amount = earned(msg.sender);
         require(amount > 0, "Nothing to claim");
         revenueDebt[msg.sender] = revenuePerTokenStored;

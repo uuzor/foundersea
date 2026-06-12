@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
 interface IFundingPoolFactory {
     struct PoolResult {
@@ -11,10 +11,10 @@ interface IFundingPoolFactory {
         uint256 ideaId,
         address usdy,
         address creator,
-        uint256 softCap,
-        uint256 hardCap,
+        uint256 hardCap,  // Removed softCap - continuous commitment model
         uint256 competitionPrizeBps,
-        address treasury
+        address treasury,
+        address ideaFactory
     ) external returns (address fundingPool, address fundingGate);
 
     function setIdeaTokenOnPool(address fundingPool, address ideaToken) external;
