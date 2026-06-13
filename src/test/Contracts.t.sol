@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "../../src/contracts/AgentIdentity.sol";
@@ -332,7 +332,6 @@ contract FundingPoolTest is Test {
             address(fundingToken),
             address(fundingGate),
             owner,
-            1000e6,    // softCap: 1000 USDY
             5000e6,    // hardCap: 5000 USDY
             1000,      // 10% competition prize
             factory
@@ -357,15 +356,18 @@ contract FundingPoolTest is Test {
     }
 
     function testInitialState() public view {
-        assertEq(fundingPool.softCap(), 1000e6);
         assertEq(fundingPool.hardCap(), 5000e6);
         assertEq(fundingPool.competitionPrizeBps(), 1000);
-        assertFalse(fundingPool.fundingClosed());
+        assertEq(fundingPool.getTrancheState(), 0); // GENESIS
         assertFalse(fundingPool.builderAssigned());
         assertFalse(fundingPool.competitorsSet());
     }
 
     function testDepositAndTokenMint() public {
+        // Transition to OPEN first (continuous commitment model)
+        vm.prank(factory);
+        fundingPool.transitionToOpen();
+        
         // Mint tokens to investor and approve
         fundingToken.mint(address(this), 1000e6);
         fundingToken.approve(address(fundingPool), type(uint256).max);
@@ -381,16 +383,27 @@ contract FundingPoolTest is Test {
     }
 
     function testCannotDepositExceedingHardCap() public {
+        // Transition to OPEN first
+        vm.prank(factory);
+        fundingPool.transitionToOpen();
+        
         fundingToken.mint(address(this), 6000e6);
         fundingToken.approve(address(fundingPool), type(uint256).max);
         
+        // First deposit hits hard cap exactly, pool auto-closes
         fundingPool.deposit(5000e6);
         
-        vm.expectRevert("Exceeds hard cap");
+        // After hard cap is hit, pool is CLOSED - deposits rejected
+        assertEq(fundingPool.getTrancheState(), 2); // CLOSED
+        vm.expectRevert("Not accepting deposits");
         fundingPool.deposit(1e6);
     }
 
     function testCloseFundingSoftCapMet() public {
+        // Transition to OPEN first
+        vm.prank(factory);
+        fundingPool.transitionToOpen();
+        
         fundingToken.mint(address(this), 1000e6);
         fundingToken.approve(address(fundingPool), type(uint256).max);
         fundingPool.deposit(1000e6);
@@ -398,11 +411,14 @@ contract FundingPoolTest is Test {
         vm.prank(owner);
         fundingPool.closeFunding();
         
-        assertTrue(fundingPool.fundingClosed());
-        assertTrue(fundingPool.checkSoftCapMet());
+        assertEq(fundingPool.getTrancheState(), 2); // CLOSED
     }
 
     function testCloseFundingSoftCapNotMet() public {
+        // Transition to OPEN first
+        vm.prank(factory);
+        fundingPool.transitionToOpen();
+        
         fundingToken.mint(address(this), 500e6);
         fundingToken.approve(address(fundingPool), type(uint256).max);
         fundingPool.deposit(500e6);
@@ -410,11 +426,14 @@ contract FundingPoolTest is Test {
         vm.prank(owner);
         fundingPool.closeFunding();
         
-        assertTrue(fundingPool.fundingClosed());
-        assertFalse(fundingPool.checkSoftCapMet());
+        assertEq(fundingPool.getTrancheState(), 2); // CLOSED
     }
 
     function testSetCompetitorPayouts() public {
+        // Transition to OPEN first
+        vm.prank(factory);
+        fundingPool.transitionToOpen();
+        
         fundingToken.mint(address(this), 1000e6);
         fundingToken.approve(address(fundingPool), type(uint256).max);
         fundingPool.deposit(1000e6);
@@ -445,6 +464,7 @@ contract FundingPoolTest is Test {
     }
 
     function testCannotSetCompetitorsBeforeFundingClosed() public {
+        // Pool starts in GENESIS, so setCompetitorPayouts should revert
         address[3] memory builders;
         builders[0] = address(0xB1);
         builders[1] = address(0xB2);
@@ -456,11 +476,15 @@ contract FundingPoolTest is Test {
         amounts[2] = 25e6;
         
         vm.prank(owner);
-        vm.expectRevert("Funding not closed");
+        vm.expectRevert("Still in genesis");
         fundingPool.setCompetitorPayouts(builders, amounts);
     }
 
     function testValidateCompetitor() public {
+        // Transition to OPEN first
+        vm.prank(factory);
+        fundingPool.transitionToOpen();
+        
         fundingToken.mint(address(this), 1000e6);
         fundingToken.approve(address(fundingPool), type(uint256).max);
         fundingPool.deposit(1000e6);
@@ -491,6 +515,10 @@ contract FundingPoolTest is Test {
     }
 
     function testReleaseCompetitorPayout() public {
+        // Transition to OPEN first
+        vm.prank(factory);
+        fundingPool.transitionToOpen();
+        
         fundingToken.mint(address(this), 1000e6);
         fundingToken.approve(address(fundingPool), type(uint256).max);
         fundingPool.deposit(1000e6);
@@ -527,6 +555,10 @@ contract FundingPoolTest is Test {
     }
 
     function testAssignBuilderAndMilestones() public {
+        // Transition to OPEN first
+        vm.prank(factory);
+        fundingPool.transitionToOpen();
+        
         fundingToken.mint(address(this), 1000e6);
         fundingToken.approve(address(fundingPool), type(uint256).max);
         fundingPool.deposit(1000e6);
@@ -552,6 +584,10 @@ contract FundingPoolTest is Test {
     }
 
     function testSetMilestoneValidated() public {
+        // Transition to OPEN first
+        vm.prank(factory);
+        fundingPool.transitionToOpen();
+        
         fundingToken.mint(address(this), 1000e6);
         fundingToken.approve(address(fundingPool), type(uint256).max);
         fundingPool.deposit(1000e6);
@@ -576,6 +612,10 @@ contract FundingPoolTest is Test {
     }
 
     function testCannotReleaseMilestoneBelowThreshold() public {
+        // Transition to OPEN first
+        vm.prank(factory);
+        fundingPool.transitionToOpen();
+        
         fundingToken.mint(address(this), 1000e6);
         fundingToken.approve(address(fundingPool), type(uint256).max);
         fundingPool.deposit(1000e6);

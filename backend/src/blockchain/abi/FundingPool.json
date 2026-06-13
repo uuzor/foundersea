@@ -18,11 +18,6 @@
         "internalType": "address"
       },
       {
-        "name": "_softCap",
-        "type": "uint256",
-        "internalType": "uint256"
-      },
-      {
         "name": "_hardCap",
         "type": "uint256",
         "internalType": "uint256"
@@ -135,16 +130,28 @@
   },
   {
     "type": "function",
-    "name": "checkSoftCapMet",
-    "inputs": [],
-    "outputs": [
+    "name": "genesisStake",
+    "inputs": [
       {
-        "name": "",
-        "type": "bool",
-        "internalType": "bool"
+        "name": "depositor",
+        "type": "address",
+        "internalType": "address"
+      },
+      {
+        "name": "amount",
+        "type": "uint256",
+        "internalType": "uint256"
       }
     ],
-    "stateMutability": "view"
+    "outputs": [],
+    "stateMutability": "nonpayable"
+  },
+  {
+    "type": "function",
+    "name": "transitionToOpen",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -272,16 +279,23 @@
   },
   {
     "type": "function",
-    "name": "fundingClosed",
+    "name": "getTrancheState",
     "inputs": [],
     "outputs": [
       {
         "name": "",
-        "type": "bool",
-        "internalType": "bool"
+        "type": "uint8",
+        "internalType": "enum FundingPool.TrancheState"
       }
     ],
     "stateMutability": "view"
+  },
+  {
+    "type": "function",
+    "name": "markAbandoned",
+    "inputs": [],
+    "outputs": [],
+    "stateMutability": "nonpayable"
   },
   {
     "type": "function",
@@ -577,19 +591,6 @@
     ],
     "outputs": [],
     "stateMutability": "nonpayable"
-  },
-  {
-    "type": "function",
-    "name": "softCap",
-    "inputs": [],
-    "outputs": [
-      {
-        "name": "",
-        "type": "uint256",
-        "internalType": "uint256"
-      }
-    ],
-    "stateMutability": "view"
   },
   {
     "type": "function",
