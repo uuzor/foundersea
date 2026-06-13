@@ -1,5 +1,6 @@
 import { Injectable, Logger, OnModuleInit } from '@nestjs/common';
 import { ConfigService } from '@nestjs/config';
+import { EncryptedWalletService } from '../common/security.middleware';
 import {
   createPublicClient,
   createWalletClient,
@@ -41,7 +42,10 @@ export class ContractService implements OnModuleInit {
   private aiAgentWallet: any;
   private chain: Chain;
 
-  constructor(private configService: ConfigService) {
+  constructor(
+    private configService: ConfigService,
+    private encryptedWalletService: EncryptedWalletService,
+  ) {
     this.chain = mantleSepolia;
   }
 
@@ -63,17 +67,41 @@ export class ContractService implements OnModuleInit {
     });
 
     // Wallet client for AI agent write operations
-    const aiAgentPrivateKey = this.configService.get('AI_AGENT_PRIVATE_KEY');
-    if (!aiAgentPrivateKey || aiAgentPrivateKey === '0x_your_private_key_here') {
-      this.logger.warn('AI_AGENT_PRIVATE_KEY not configured or invalid - write operations disabled');
+    const aiAgentPrivateKeyConfig = this.configService.get('AI_AGENT_PRIVATE_KEY');
+    const walletPassword = this.configService.get('WALLET_PASSWORD');
+    
+    if (!aiAgentPrivateKeyConfig) {
+      this.logger.warn('AI_AGENT_PRIVATE_KEY not configured - write operations disabled');
       return;
     }
 
-    this.aiAgentWallet = createWalletClient({
-      chain: this.chain,
-      transport: http(rpcUrl),
-      account: aiAgentPrivateKey as `0x${string}`,
-    });
+    try {
+      // Try to decrypt if encrypted, otherwise use as-is
+      let privateKey = aiAgentPrivateKeyConfig;
+      if (aiAgentPrivateKeyConfig.includes(':') && walletPassword) {
+        this.logger.log('Decrypting encrypted wallet...');
+        privateKey = this.encryptedWalletService.decryptPrivateKey(aiAgentPrivateKeyConfig, walletPassword);
+      } else if (aiAgentPrivateKeyConfig === '0x_your_private_key_here') {
+        this.logger.warn('Placeholder private key detected - write operations disabled');
+        return;
+      }
+
+      // Validate key format
+      if (!this.encryptedWalletService.validatePrivateKey(privateKey)) {
+        this.logger.error('Invalid private key format');
+        return;
+      }
+
+      this.aiAgentWallet = createWalletClient({
+        chain: this.chain,
+        transport: http(rpcUrl),
+        account: privateKey as `0x${string}`,
+      });
+      
+      this.logger.log('✅ AI Agent wallet initialized');
+    } catch (error) {
+      this.logger.error('Failed to initialize AI agent wallet:', error);
+    }
   }
 
   getPublicClient() {

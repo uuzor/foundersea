@@ -53,10 +53,7 @@ export class IdeaService {
         [
           {
             metadataIpfsHash: metadataIpfsHash,
-            targetRaise: BigInt((dto as any).targetRaise || 0),
-            softCap: BigInt((dto as any).softCap || 0),
             hardCap: BigInt((dto as any).hardCap || 0),
-            fundingDeadline: BigInt((dto as any).fundingDeadline || 0),
             competitionPrizeBps: 1000,
             builderAllocBps: 3000,
             gateType: 0,
@@ -172,7 +169,7 @@ export class IdeaService {
   }
 
   /**
-   * Get idea details by ID
+   * Get idea details by ID - enhanced for continuous commitment model
    */
   async getIdea(ideaId: bigint) {
     try {
@@ -183,6 +180,23 @@ export class IdeaService {
       const abi = Array.isArray(ideaFactoryAbi) ? ideaFactoryAbi : JSON.parse(ideaFactoryAbi);
 
       const idea = await this.contractService.readContract(ideaFactoryAddress, abi, 'getIdea', [ideaId]);
+      
+      // Get funding pool state for tranche information
+      const fundingPoolAddress = idea[2] as `0x${string}`;
+      let trancheState: bigint | null = null;
+      let raisedAmount: bigint | null = null;
+      let hardCap: bigint | null = null;
+      
+      if (fundingPoolAddress && fundingPoolAddress !== '0x0000000000000000000000000000000000000000') {
+        try {
+          const fundingPoolAbi = this.contractService.getFundingPoolAbi();
+          trancheState = await this.contractService.readContract(fundingPoolAddress, fundingPoolAbi, 'getTrancheState', []) as bigint;
+          raisedAmount = await this.contractService.readContract(fundingPoolAddress, fundingPoolAbi, 'raisedAmount', []) as bigint;
+          hardCap = await this.contractService.readContract(fundingPoolAddress, fundingPoolAbi, 'hardCap', []) as bigint;
+        } catch (e) {
+          this.logger.warn(`Could not fetch funding pool state for idea ${ideaId}:`, e);
+        }
+      }
 
       return {
         ideaId,
@@ -193,6 +207,10 @@ export class IdeaService {
         status: idea[4],
         aiScore: idea[5],
         approvalReasonHash: idea[6],
+        // Continuous commitment model fields
+        trancheState: trancheState !== null ? Number(trancheState) : null,
+        raisedAmount: raisedAmount !== null ? raisedAmount.toString() : '0',
+        hardCap: hardCap !== null ? hardCap.toString() : '0',
       };
     } catch (error: any) {
       this.logger.error(`Failed to get idea ${ideaId}:`, error.message);

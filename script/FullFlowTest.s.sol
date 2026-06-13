@@ -1,5 +1,5 @@
 // SPDX-License-Identifier: MIT
-pragma solidity ^0.8.24;
+pragma solidity ^0.8.20;
 
 import "forge-std/Script.sol";
 import "forge-std/console2.sol";
@@ -97,12 +97,10 @@ contract FullFlowTest is Script {
         console2.log("=== CREATING IDEA ===");
         IdeaFactory factory = IdeaFactory(IDEA_FACTORY);
         
+        // New continuous commitment config (no soft cap)
         IdeaFactory.IdeaConfig memory config = IdeaFactory.IdeaConfig({
             metadataIpfsHash: "QmTest123",
-            targetRaise: 100_000_000_000, // 100k USDY
-            softCap: 50_000_000_000,      // 50k USDY
-            hardCap: 100_000_000_000,      // 100k USDY
-            fundingDeadline: 0,
+            hardCap: 100_000_000_000,      // 100k USDY hard cap
             competitionPrizeBps: 2000,      // 20%
             builderAllocBps: 10000,        // 10%
             gateType: GateType.OPEN,
@@ -112,7 +110,6 @@ contract FullFlowTest is Script {
         vm.startBroadcast(builderKey);
         
         // Approve USDY for deposit (500 USDY min deposit)
-        // Builder already has USDY from previous run or we check here
         uint256 builderBalance = IERC20(USDY).balanceOf(builder);
         console2.log("Builder USDY balance:", builderBalance);
         
@@ -137,37 +134,46 @@ contract FullFlowTest is Script {
         console2.log("FundingPool:", poolAddr);
         console2.log("");
         
-        // Step 4: AI approves idea (using deployerKey since deployer is aiAgent)
-        console2.log("=== AI APPROVES IDEA ===");
+        // Step 4: AI approves idea - genesis stake deploys immediately
+        console2.log("=== AI APPROVES IDEA (Genesis Stake Deploys) ===");
         vm.startBroadcast(deployerKey);
+        
+        // Approve protocol seed from treasury
+        (ok,) = USDY.call(abi.encodeWithSignature("approve(address,uint256)", IDEA_FACTORY, 1000_000_000_000));
+        require(ok, "treasury approve failed");
+        
         factory.aiApproveIdea(ideaId, 85, "Strong team, clear roadmap, good market potential");
         console2.log("AI Approved idea with score: 85");
+        console2.log("Genesis stake deployed: $500 creator + $1000 protocol seed");
         vm.stopBroadcast();
         console2.log("");
         
-        // Step 5: Open funding pool and LP deposits
-        console2.log("=== FUNDING PHASE ===");
+        // Step 5: Transition to OPEN and deposit (continuous commitment model)
+        console2.log("=== OPEN PHASE (Public Deposits) ===");
         
         FundingPool fundingPool = FundingPool(poolAddr);
         
-        // LP1 deposits (50k to stay under soft cap, then more later after DAO accepts)
+        // Check tranche state
+        console2.log("Tranche state (0=GENESIS, 1=OPEN, 2=CLOSED):", fundingPool.getTrancheState());
+        
+        // LP1 deposits
         vm.startBroadcast(lp1Key);
         (ok,) = USDY.call(abi.encodeWithSignature("approve(address,uint256)", poolAddr, 500_000_000_000));
         require(ok, "LP1 approve failed");
-        fundingPool.deposit(40_000_000_000);  // 40k USDY - under soft cap
+        fundingPool.deposit(40_000_000_000);  // 40k USDY
         console2.log("LP1 deposited 40k USDY");
         vm.stopBroadcast();
         
-        // LP2 deposits (60k to reach soft cap)
+        // LP2 deposits
         vm.startBroadcast(lp2Key);
         (ok,) = USDY.call(abi.encodeWithSignature("approve(address,uint256)", poolAddr, 300_000_000_000));
         require(ok, "LP2 approve failed");
-        fundingPool.deposit(20_000_000_000);  // 20k USDY - total 60k, reaching soft cap
+        fundingPool.deposit(20_000_000_000);  // 20k USDY
         console2.log("LP2 deposited 20k USDY");
         vm.stopBroadcast();
         
         console2.log("Total raised:", fundingPool.raisedAmount());
-        console2.log("Soft cap met:", fundingPool.checkSoftCapMet());
+        console2.log("Tranche state:", fundingPool.getTrancheState());
         console2.log("");
         
         // Step 6: End funding (simulate time passing)
@@ -178,7 +184,7 @@ contract FullFlowTest is Script {
         vm.startBroadcast(deployerKey);
         fundingPool.closeFunding();
         console2.log("Funding closed");
-        console2.log("Soft cap met:", fundingPool.raisedAmount() >= fundingPool.softCap());
+        console2.log("Tranche state after close:", fundingPool.getTrancheState());
         vm.stopBroadcast();
         console2.log("");
         
@@ -195,9 +201,9 @@ contract FullFlowTest is Script {
         
         // Step 8: Check final state
         console2.log("=== FINAL STATE ===");
-        console2.log("Funding Closed:", fundingPool.fundingClosed());
+        console2.log("Tranche state (0=GENESIS, 1=OPEN, 2=CLOSED):", fundingPool.getTrancheState());
         console2.log("Total Raised:", fundingPool.raisedAmount());
-        console2.log("Soft Cap:", fundingPool.softCap());
+        console2.log("Hard Cap:", fundingPool.hardCap());
         
         IdeaToken token = IdeaToken(tokenAddr);
         console2.log("Token Total Supply:", token.totalSupply());

@@ -1,5 +1,6 @@
 import { Injectable, Logger } from '@nestjs/common';
 import { ContractService } from '../blockchain/contract.service';
+import { TokenRouterService } from './token-router.service';
 import { keccak256, toHex } from 'viem';
 import axios from 'axios';
 
@@ -9,18 +10,21 @@ export class AgentService {
   private pinataApiKey: string;
   private pinataApiSecret: string;
 
-  constructor(private contractService: ContractService) {
+  constructor(
+    private contractService: ContractService,
+    private tokenRouterService: TokenRouterService,
+  ) {
     this.pinataApiKey = process.env.PINATA_API_KEY || '';
     this.pinataApiSecret = process.env.PINATA_API_SECRET || '';
   }
 
   /**
-   * Score an idea using AI agent
+   * Score an idea using AI agent (via TokenRouter)
    * Records decision on AgentIdentity
+   * For continuous commitment model: AI approval triggers genesis stake deployment
    */
   async scoreIdea(ideaId: bigint, title: string, description: string, metadata?: any) {
     const publicClient = this.contractService.getPublicClient();
-    const aiAgentWallet = this.contractService.getAIAgentWallet();
     const chain = this.contractService.getChain();
     const agentIdentityAddress = this.contractService.getAgentIdentityAddress();
     const agentIdentityAbi = this.contractService.getAgentIdentityAbi();
@@ -28,53 +32,132 @@ export class AgentService {
     try {
       this.logger.log(`Scoring idea ${ideaId}: "${title}"`);
 
-      // TODO: Integrate with TokenRouter for actual AI scoring
-      // For now, use mock data
-      const mockResult = {
-        score: 82,
-        reasoning: `Evaluated "${title}": Strong market potential, clear problem statement, experienced team indicators.`,
-        approved: true,
+      // Use TokenRouter for real AI scoring
+      let aiResult: {
+        score: number;
+        reasoning: string;
+        approved: boolean;
       };
 
-      this.logger.log(`  AI Score: ${mockResult.score}, Approved: ${mockResult.approved}`);
+      try {
+        const ideaScore = await this.tokenRouterService.scoreIdeaAgentic({
+          ideaId: ideaId.toString(),
+          title,
+          description,
+          marketCategory: metadata?.category || 'general',
+          chain: 'mantle', // Use string chain identifier
+        });
+
+        aiResult = {
+          score: ideaScore.overallScore,
+          reasoning: ideaScore.reasoning,
+          approved: ideaScore.recommendation === 'APPROVE',
+        };
+
+        this.logger.log(`  TokenRouter Score: ${aiResult.score}, Recommendation: ${ideaScore.recommendation}`);
+      } catch (tokenRouterError) {
+        this.logger.warn(`TokenRouter failed, falling back to heuristic scoring: ${tokenRouterError}`);
+        // Fallback to heuristic scoring if TokenRouter is unavailable
+        aiResult = await this.heuristicScoreIdea(title, description, metadata);
+      }
 
       // 1. Upload reasoning to Pinata
-      const reasoningIpfsHash = await this.uploadToPinata(mockResult);
+      const reasoningIpfsHash = await this.uploadToPinata(aiResult);
       this.logger.log(`  Reasoning uploaded to IPFS: ${reasoningIpfsHash}`);
 
       // 2. Prepare input/output hashes
       const inputHash = keccak256(toHex(JSON.stringify({ title, description })));
-      const outputHash = keccak256(toHex(JSON.stringify(mockResult)));
+      const outputHash = keccak256(toHex(JSON.stringify(aiResult)));
 
-       // 3. Record decision on AgentIdentity (use generic write wrapper)
-       const hash = await this.contractService.writeContract(
-         agentIdentityAddress,
-         agentIdentityAbi,
-         'recordDecision',
-         [
-           0, // DecisionType.IDEA_APPROVE
-           ideaId,
-           inputHash,
-           outputHash,
-           BigInt(mockResult.score),
-           reasoningIpfsHash,
-         ],
-       );
+      // 3. Call aiApproveIdea on chain (this triggers genesis stake deployment in new model)
+      const ideaFactoryAddress = this.contractService.getIdeaFactoryAddress();
+      const ideaFactoryAbi = this.contractService.getIdeaFactoryAbi();
+      
+      const approveHash = await this.contractService.writeContract(
+        ideaFactoryAddress,
+        ideaFactoryAbi,
+        'aiApproveIdea',
+        [ideaId, BigInt(aiResult.score), reasoningIpfsHash],
+      );
 
-       const receipt = await publicClient.waitForTransactionReceipt({ hash });
-      this.logger.log(`✓ Decision recorded on AgentIdentity: tx=${hash}`);
+      const approveReceipt = await publicClient.waitForTransactionReceipt({ hash: approveHash });
+      this.logger.log(`✓ Idea approved on-chain (genesis stake deploying): tx=${approveHash}`);
+
+      // 4. Record decision on AgentIdentity
+      const decisionHash = await this.contractService.writeContract(
+        agentIdentityAddress,
+        agentIdentityAbi,
+        'recordDecision',
+        [
+          0, // DecisionType.IDEA_APPROVE
+          ideaId,
+          inputHash,
+          outputHash,
+          BigInt(aiResult.score),
+          reasoningIpfsHash,
+        ],
+      );
+
+      const decisionReceipt = await publicClient.waitForTransactionReceipt({ hash: decisionHash });
+      this.logger.log(`✓ Decision recorded on AgentIdentity: tx=${decisionHash}`);
 
       return {
-        score: mockResult.score,
-        reasoning: mockResult.reasoning,
-        approved: mockResult.approved,
-        transactionHash: hash,
-        blockNumber: receipt.blockNumber,
+        score: aiResult.score,
+        reasoning: aiResult.reasoning,
+        approved: aiResult.approved,
+        transactionHash: approveHash,
+        blockNumber: approveReceipt.blockNumber,
+        genesisStakeDeployed: aiResult.approved, // Genesis stake deploys on approval
       };
     } catch (error: any) {
       this.logger.error(`❌ Failed to score idea ${ideaId}:`, error.message);
       throw error;
     }
+  }
+
+  /**
+   * Fallback heuristic scoring when TokenRouter is unavailable
+   */
+  private async heuristicScoreIdea(title: string, description: string, metadata?: any): Promise<{
+    score: number;
+    reasoning: string;
+    approved: boolean;
+  }> {
+    let score = 50;
+    const factors: string[] = [];
+
+    // Check title length and quality
+    if (title.length >= 10 && title.length <= 100) {
+      score += 10;
+      factors.push('Good title length');
+    }
+
+    // Check description length
+    if (description.length >= 100) {
+      score += 15;
+      factors.push('Detailed description');
+    }
+
+    // Check for demo/repository links
+    if (metadata?.demoUrl || metadata?.repositoryUrl) {
+      score += 10;
+      factors.push('Has supporting links');
+    }
+
+    // Check category
+    if (metadata?.category && metadata.category !== 'general') {
+      score += 5;
+      factors.push('Specific category');
+    }
+
+    // Normalize score
+    score = Math.min(100, Math.max(0, score));
+
+    return {
+      score,
+      reasoning: `Heuristic analysis of "${title}": ${factors.join(', ') || 'Basic validation passed'}. Score: ${score}/100`,
+      approved: score >= 50,
+    };
   }
 
   /**
